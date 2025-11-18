@@ -1,0 +1,32 @@
+Package: EPhysMEA
+Type: Package
+Title: Analysis Tools for Multichannel Electrophysiology
+Version: 0.1.0
+Author: person("Moritz", "Lindner", email = "moritz@lindnerlab.de", role =
+    c("aut", "cre"))
+Description: Companion analysis package for 'EPhysData' providing binning and
+    trial aggregation, tuning and receptive-field analysis, Naka-Rushton
+    fitting, spike-train irregularity metrics, and ggplot2-based visualisation
+    for 'EPhysEvents' and 'EPhysContinuous' objects.
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Depends:
+    EPhysData (>= 1.0.1),
+    R (>= 4.1.0)
+Imports:
+    EPhysData,
+    cli,
+    cowplot,
+    ggplot2,
+    ggpubr,
+    matrixStats,
+    methods,
+    minpack.lm,
+    reshape2,
+    stats,
+    units
+Remotes:
+    github::moritzlindner/EPhysData,
+    github::moritzlindner/EPhysMethods
+RoxygenNote: 7.3.2

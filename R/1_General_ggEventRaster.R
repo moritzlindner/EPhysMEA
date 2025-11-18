@@ -1,0 +1,209 @@
+#' Spike Raster for EPhysEvents (auto-layout)
+#'
+#' Expects \code{object} to be in one of two valid formats:
+#' \enumerate{
+#'   \item \code{length(Channels(object)) == 1}: plots one channel across all Metadata rows (rows = traces).
+#'   \item \code{nrow(Metadata(object)) == 1}: plots all channels within the single Metadata row (rows = channels).
+#' }
+#' Spikes are drawn as vertical ticks via \code{geom_linerange}. If a stimulus is
+#' present and \code{show_stimulus = TRUE}, the output of \code{ggStimulusPlot()}
+#' is stacked underneath via \pkg{cowplot}.
+#'
+#' @param object An \code{EPhysEvents} object in a valid configuration (see above).
+#' @param tlim Optional numeric length-2 \code{c(tmin, tmax)} time window (s).
+#' @param tick_height Numeric height of each spike tick in y-units (row spacing). Default 0.8.
+#' @param line_size Line width for \code{geom_linerange}. Default 0.3.
+#' @param show_stimulus Logical; if TRUE, try to compose a stimulus panel underneath. Default TRUE.
+#' @param stimulus_height Relative height of the stimulus panel in \code{cowplot::plot_grid}. Default 0.6.
+#' @param row_labels Optional character vector of row labels; otherwise derived from Metadata
+#'   (RecordingID/rownames) or channel names, depending on layout.
+#' @return A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
+#'   is attached as \code{attr(., "raster_data")}.
+#'   @importFrom ggpubr theme_pubr
+#' @examples
+#' \dontrun{
+#' # Case 1: object has exactly one channel overall
+#' ggEventRaster(ephys, tlim = c(-0.5, 1))
+#'
+#' # Case 2: object has exactly one metadata row (one trace)
+#' ggEventRaster(ephys_one_row, tlim = c(0, 2), show_stimulus = FALSE)
+#' }
+#' @importClassesFrom EPhysData EPhysEvents
+#' @importFrom EPhysData Metadata Channels
+#' @name ggEventRaster
+setGeneric("ggEventRaster", function(X, ...)
+  standardGeneric("ggEventRaster"))
+
+#' @export
+setMethod("ggEventRaster", signature(X = "EPhysEvents"),
+          function(X,
+                   tlim            = NULL,
+                   tick_height     = 0.8,
+                   line_size       = 0.3,
+                   show_stimulus   = TRUE,
+                   stimulus_height = 0.6,
+                   row_labels      = NULL) {
+
+            # ---- deps
+            if (!requireNamespace("ggplot2", quietly = TRUE)) {
+              stop("Package 'ggplot2' is required.")
+            }
+            md  <- Metadata(X)
+            chs <- Channels(X)
+            n_rows <- if (!is.null(md)) nrow(md) else length(X@Data)
+
+            # Determine layout case:
+            caseA <- !is.null(chs) && length(chs) == 1L                # one channel across rows
+            caseB <- !is.null(md)  && n_rows == 1L                     # one row with many channels
+
+            if (!(caseA || caseB)) {
+              stop(
+                "Object must satisfy  one of:\n",
+                "  • length(Channels(X)) == 1, or\n",
+                "  • nrow(Metadata(X)) == 1."
+              )
+            }
+
+            # Helpers
+            channels_in_row <- function(x, i) {
+              nm <- names(x@Data[[i]])
+              if (is.null(nm)) seq_along(x@Data[[i]]) else nm
+            }
+            extract_spike_times <- function(cell) {
+              if (is.null(cell)) return(numeric(0))
+              if (is.numeric(cell)) return(as.numeric(cell))
+              if (is.data.frame(cell)) {
+                if ("Time" %in% names(cell)) return(as.numeric(cell$Time))
+                if ("t"    %in% names(cell)) return(as.numeric(cell$t))
+                return(as.numeric(cell[[1]]))
+              }
+              if (is.list(cell)) return(as.numeric(unlist(cell, use.names = FALSE)))
+              stop("Unsupported spike container type: ", class(cell)[1])
+            }
+
+            df <- NULL
+            # ---- Case A: one channel across all Metadata rows
+            if (caseA) {
+              ch1 <- chs[[1]]
+              missing_in <- integer(0)
+              for (i in seq_len(n_rows)) {
+                row_ch <- channels_in_row(X, i)
+                if (!(ch1 %in% row_ch)) { missing_in <- c(missing_in, i); next }
+                spikes <- extract_spike_times(X@Data[[i]][[ch1]])
+                if (!is.null(tlim)) spikes <- spikes[spikes >= tlim[1] & spikes <= tlim[2]]
+                df <- rbind(df, if (length(spikes)) {
+                  data.frame(unit = i, label = i, channel = ch1, t = spikes, stringsAsFactors = FALSE)
+                } else {
+                  data.frame(unit = i, label = i, channel = ch1, t = NA_real_, stringsAsFactors = FALSE)
+                })
+              }
+              if (length(missing_in)) {
+                stop("Channel '", ch1, "' not present in rows: ",
+                     paste(missing_in, collapse = ", "), ".")
+              }
+
+            } else {
+              # ---- Case B: one Metadata row with multiple channels
+              i <- 1L
+              ch_use <- channels_in_row(X, i)
+              for (ch in ch_use) {
+                spikes <- extract_spike_times(X@Data[[i]][[ch]])
+                if (!is.null(tlim)) spikes <- spikes[spikes >= tlim[1] & spikes <= tlim[2]]
+                df <- rbind(df, if (length(spikes)) {
+                  data.frame(unit = ch, label = ch, channel = ch, t = spikes, stringsAsFactors = FALSE)
+                } else {
+                  data.frame(unit = ch, label = ch, channel = ch, t = NA_real_, stringsAsFactors = FALSE)
+                })
+              }
+            }
+
+            # Build labels
+            if (caseA) {
+              rows_use <- seq_len(n_rows)
+              if (is.null(row_labels)) {
+                if (!is.null(md)) {
+                  if (!is.null(rownames(md)) && length(rownames(md))) {
+                    rowlabs <- setNames(rownames(md)[rows_use], rows_use)
+                  } else if ("RecordingID" %in% names(md)) {
+                    rowlabs <- setNames(as.character(md$RecordingID[rows_use]), rows_use)
+                  } else {
+                    rowlabs <- setNames(paste0("row_", rows_use), rows_use)
+                  }
+                } else {
+                  rowlabs <- setNames(paste0("row_", rows_use), rows_use)
+                }
+              } else {
+                stopifnot(length(row_labels) == length(rows_use))
+                rowlabs <- setNames(row_labels, rows_use)
+              }
+            } else {
+              rowlabs <- setNames(unique(df$unit), unique(df$unit))  # channel names as labels
+            }
+
+            # Map rows to integer y positions
+            order_keys <- unique(df$unit)
+            y_map <- setNames(seq_along(order_keys), order_keys)
+            df$y <- unname(y_map[as.character(df$unit)])
+
+            # x-limits
+            if (is.null(tlim)) {
+              xlim_use <- if (nrow(df) && any(is.finite(df$t))) range(df$t, na.rm = TRUE) else c(0, 1)
+              if (!all(is.finite(xlim_use))) xlim_use <- c(0, 1)
+            } else {
+              xlim_use <- tlim
+            }
+
+            # Blank scaffold so rows without spikes still reserve space
+            blank_df <- data.frame(t = xlim_use[1], y = seq_along(order_keys))
+
+            # ---- Plot
+            p_raster <- ggplot2::ggplot(df, ggplot2::aes(x = t)) +
+              ggplot2::geom_blank(data = blank_df, ggplot2::aes(x = t, y = y)) +
+              ggplot2::geom_linerange(
+                ggplot2::aes(ymin = y - tick_height/2, ymax = y + tick_height/2),
+                linewidth = line_size, na.rm = TRUE
+              ) +
+              ggplot2::scale_y_continuous(
+                breaks = seq_along(order_keys),
+                labels = unname(if (caseA) rowlabs[as.character(order_keys)] else rowlabs),
+                expand = ggplot2::expansion(mult = c(0.02, 0.02))
+              ) +
+              ggplot2::coord_cartesian(xlim = xlim_use) +
+              ggplot2::labs(
+                x = "Time (s)",
+                y = if (caseA) "Trace (Metadata row)" else "Channel",
+                title = if (caseA)
+                  paste0("Raster: Channel ", unique(df$channel[is.finite(df$t)])[1])
+                else
+                  "Raster: Single trace, per channel"
+              ) +
+              theme_pubr(base_size = 8) +
+              ggplot2::theme(
+                panel.grid.major.y = ggplot2::element_blank(),
+                panel.grid.minor   = ggplot2::element_blank()
+              )
+
+            p_out <- p_raster
+
+            # ---- Optional stimulus panel via cowplot
+            if (isTRUE(show_stimulus)) {
+              stim_plot <- tryCatch({
+                ggStimulusPlot(X, tlim = xlim_use)
+              }, error = function(e) NULL)
+
+              if (!is.null(stim_plot)) {
+                if (requireNamespace("cowplot", quietly = TRUE)) {
+                  p_out <- cowplot::plot_grid(
+                    p_raster, stim_plot, ncol = 1,
+                    rel_heights = c(1, stimulus_height), align = "v", axis = "lr"
+                  )
+                } else {
+                  # cowplot not installed: fall back to just the raster (no stop)
+                  p_out <- p_raster
+                }
+              }
+            }
+
+            attr(p_out, "raster_data") <- df
+            p_out
+          })
