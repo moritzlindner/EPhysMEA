@@ -19,6 +19,7 @@ data import and basic container handling are done in `EPhysData`, while
 
 You can install the development version of `EPhysMEA` from GitHub:
 
+``` r
 if (!requireNamespace("remotes", quietly = TRUE)) {
   install.packages("remotes")
 }
@@ -30,12 +31,17 @@ remotes::install_github("moritzlindner/EPhysMEA")
 library(EPhysData)
 library(EPhysMEA)
 
-## Example: basic rate and variability metrics ---------------------------
+```
 
+## Example: basic rate and variability metrics
+
+``` r 
 # events: EPhysEvents object (runs × channels of spike/event times)
 # cont:   EPhysContinuous object (time × runs × channels of traces)
 
 # Mean firing rate per channel
 
+
 rate_df <- ChannelMeanRate(events)
 head(rate_df)
+```
