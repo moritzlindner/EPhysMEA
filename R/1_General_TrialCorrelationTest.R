@@ -75,7 +75,12 @@ trial_cor_pvalue_perm <- function(trials_by_time,
 
   cli_progress_bar("Calculating p-value for trial-to-trial correlation.", total = n_perm)
   for (b in seq_len(n_perm)) {
-    idx <- vapply(seq_len(n_trials), function(i) sample.int(n_time), integer(n_time))
+    idx <- vapply(seq_len(n_trials), function(i) {
+      repeat {
+        p <- sample.int(n_time)
+        if (!all(p == seq_len(n_time))) return(p)  # reject identity
+      }
+    }, integer(n_time))
 
     rows <- rep(seq_len(n_trials), each = n_time)  # 1,1,...,1, 2,2,...,2, ...
     cols <- as.vector(idx)                          # c(idx[,1], idx[,2], ..., idx[,n_trials])
