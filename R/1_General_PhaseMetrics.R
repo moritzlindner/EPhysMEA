@@ -115,7 +115,16 @@ setMethod("PhaseMetrics", signature(X = "EPhysEvents"),
               if (!is.null(seg_fun)) {
                 as.numeric(seg_fun(spk))
               } else {
-                approx(x = tt, y = as.numeric(seg_vec), xout = spk, rule = 2, ties = "ordered")$y
+                approx(
+                  x = tt,
+                  y = as.numeric(seg_vec),
+                  xout = spk,
+                  method = "constant",
+                  # <- step function, not linear
+                  f      = 0,
+                  rule = 2,
+                  ties = "ordered"
+                )$y
               }
             }
 
@@ -157,8 +166,6 @@ setMethod("PhaseMetrics", signature(X = "EPhysEvents"),
               compute_by_segment(df)  # named numeric by segment
             }
 
-            # --- compute metrics with your EPhysEvents::lapply ----------------
-            # returns nested list: results[[run]][[channel_name]] -> named numeric
             results <- lapply(
               X        = x_use,
               FUN      = per_channel_fun,
@@ -166,11 +173,9 @@ setMethod("PhaseMetrics", signature(X = "EPhysEvents"),
               error    = match.arg(lapply_error, c("stop","warn")),
               progress = progress
             )
-
-            results<-lapply(results, function(x){lapply(x, as.vector)})
-
             # --- allocate output and pack results into [seg × trial × channel]
             trial_labels <- as.character(md$RunUID)
+            names(results)<-NULL
             out <- array(NA_real_, dim = c(nSeg, nTr, nCh),
                          dimnames = list(
                            time    = as.character(seg_levels),
@@ -178,23 +183,36 @@ setMethod("PhaseMetrics", signature(X = "EPhysEvents"),
                            channel = ch
                          ))
 
-            default <- 0  # "no spikes ⇒ no response"
             for (i in seq_len(nTr)) {
               row_res <- results[[i]]
-              if (!is.list(row_res)) next
-              # keep channel-name addressing robust
+              if (!is.list(row_res)) {
+                stop("PhaseMetrics: Aggregation into matrix failed: no valid data for run ",
+                     md$RunUID[i], ".")
+              }
+
               for (cj in seq_len(nCh)) {
-                chn <- ch[cj]
-                v <- row_res[[chn]]
-                vals <- rep(default, nSeg)
-                if (length(v)) {
-                  m <- match(seg_levels, as.numeric(names(v)), nomatch = 0L)
-                  pos <- which(m > 0L)
-                  if (length(pos)) vals[pos] <- v[m[pos]]
+                v <- row_res[[cj]]
+
+                if (!is.numeric(v)) {
+                  stop("PhaseMetrics: expected numeric segment vector for channel ", cj, ".")
                 }
-                out[, i, cj] <- as.numeric(vals)
+
+                vals <- rep(0, nSeg)
+                if (length(v) > 0) {
+                  lab  <- as.numeric(names(v))
+                  idx  <- match(lab, seg_levels)  # position of each label in global grid
+                  keep <- !is.na(idx)
+                  if (any(!keep)) {
+                    warning("PhaseMetrics: some segment labels for channel ", cj,
+                            " (run ", md$RunUID[i], ") do not match seg_levels and are dropped.")
+                  }
+                  vals[idx[keep]] <- v[keep]
+                }
+
+                out[, i, cj] <- vals
               }
             }
+
 
             # --- build EPhysContinuous
             newEPhysContinuous(
