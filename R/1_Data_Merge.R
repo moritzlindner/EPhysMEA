@@ -1,250 +1,500 @@
-#' Merge two EPhysContainer objects along channels
-#'
-#' Concatenate channels from two \code{EPhysContainer} objects after aligning
-#' **Runs** (rows in \code{Metadata}) by key columns given in \code{match_by}
-#' (default \code{c("Step","Experiment")}). Supports two data layouts:
-#' (1) list-of-arrays where the 3rd dim is channels, and
-#' (2) list-of-lists where the 2nd-level list enumerates channels.
-#' Both inputs must use the same layout.
-#'
-#' @param x,y \code{EPhysContainer} objects.
-#' @param match_by Character vector of column names in the Runs (Metadata) used
-#'   to align Runs. Defaults to \code{c("Step","Experiment")}.
-#' @return A merged \code{EPhysContainer}.
-#' @importClassesFrom EPhysData EPhysContainer
-setGeneric("Merge", function(x, y, match_by = c("Step","Experiment"))
-  standardGeneric("Merge"))
+## -------------------------------------------------------------------------
+## Low-level helper on EPhysContainer: common checks & metadata merging
+## -------------------------------------------------------------------------
 
-setMethod("Merge", signature(x="EPhysContainer", y="EPhysContainer"),
-          function(x, y, match_by = c("Step","Experiment")) {
-            .key <- function(md, by) {
-              if (!all(by %in% names(md)))
-                stop("match_by columns not found in Runs (Metadata): ",
-                     paste(setdiff(by, names(md)), collapse=", "))
-              do.call(paste, c(lapply(md[by], as.character), sep = "\r"))
-            }
+.merge_EPhysContainer_common <- function(objects,
+                                         match_by = c("Step", "Experiment", "Run"),
+                                         prefixes = NULL) {
+  if (!is.list(objects) || length(objects) == 0L) {
+    stop("'objects' must be a non-empty list.")
+  }
+  warning(".merge_EPhysContainer_common is untested")
+  ## Drop NULL entries defensively
+  objects <- Filter(Negate(is.null), objects)
+  if (length(objects) == 0L) {
+    stop("'objects' contains only NULL entries.")
+  }
 
-            align_by_key <- function(runs_x, runs_y, by) {
-              kx <- .key(runs_x, by); ky <- .key(runs_y, by)
-              if (anyDuplicated(kx)) stop("Keys in 'x' Runs are not unique.")
-              if (anyDuplicated(ky)) stop("Keys in 'y' Runs are not unique.")
-              idx <- match(kx, ky)
-              if (anyNA(idx)) stop("Some Runs in 'x' were not found in 'y' by match_by.")
-              idx
-            }
+  ## All objects must inherit from EPhysContainer and share the same concrete class
+  if (!all(vapply(objects, function(x) methods::is(x, "EPhysContainer"), logical(1)))) {
+    stop("All elements of 'objects' must inherit from 'EPhysContainer'.")
+  }
+  classes    <- vapply(objects, function(x) class(x)[1L], character(1))
+  base_class <- classes[1L]
+  if (!all(classes == base_class)) {
+    stop("All elements of 'objects' must have the same concrete class.")
+  }
 
-            # Determine data layout
-            layout_of <- function(d) {
-              if (!is.list(d) || length(d) == 0L) return("list")  # fall back; will catch later
-              d1 <- d[[ min(1L, length(d)) ]]
-              if (is.array(d1)) return("list_of_arrays")
-              if (is.list(d1))  return("list_of_lists")
-              "unknown"
-            }
+  ## Helper: build matching key from Metadata
+  match_by   <- unique(as.character(match_by))
+  key_from_md <- function(md) {
+    if (!is.data.frame(md)) stop("Metadata() must return a data.frame.")
+    missing <- setdiff(match_by, names(md))
+    if (length(missing)) {
+      stop("Required 'match_by' columns missing from Metadata: ",
+           paste(missing, collapse = ", "))
+    }
+    do.call(paste, c(lapply(md[match_by], as.character), sep = "\r"))
+  }
 
-            # Align Channel_Metadata rows to channels (by rownames or 'Channel' column)
-            align_chmeta_to_channels <- function(chm, channels, for_y = FALSE, rename_map = NULL) {
-              if (!is.data.frame(chm) || nrow(chm) == 0L) {
-                out <- data.frame(row.names = channels)
-                return(out)
-              }
-              # If y-side and a rename_map is given, rename its rownames/Channel before aligning
-              if (for_y && !is.null(rename_map)) {
-                if (!is.null(rownames(chm))) {
-                  rn <- rownames(chm)
-                  rn[match(names(rename_map), rn)] <- unname(rename_map[names(rename_map)])
-                  rownames(chm) <- rn
-                } else if ("Channel" %in% names(chm)) {
-                  chm$Channel <- ifelse(chm$Channel %in% names(rename_map),
-                                        rename_map[chm$Channel], chm$Channel)
-                }
-              }
+  md_ref <- Metadata(objects[[1L]])
+  key_ref <- key_from_md(md_ref)
+  if (anyDuplicated(key_ref)) {
+    stop("Rows in Metadata(objects[[1]]) are not unique with respect to 'match_by'.")
+  }
+  n_runs <- nrow(md_ref)
 
-              if (!is.null(rownames(chm)) && setequal(rownames(chm), channels)) {
-                chm <- chm[match(channels, rownames(chm)), , drop = FALSE]
-              } else if ("Channel" %in% names(chm) && setequal(chm$Channel, channels)) {
-                chm <- chm[match(channels, chm$Channel), , drop = FALSE]
-                rownames(chm) <- channels
-              } else if (nrow(chm) == length(channels)) {
-                rownames(chm) <- channels
-              } else {
-                stop("Unable to align Channel_Metadata to channels (incomplete or mismatched rows).")
-              }
-              chm
-            }
+  ## Align all other objects to the first by match_by columns
+  idx_list <- vector("list", length(objects))
+  idx_list[[1L]] <- seq_len(n_runs)
 
-            # helper: merge two info lists; if values differ, mark as "EPhysContainer"
-            merge_info_lists_with_sentinel <- function(ax, ay, sentinel = "EPhysContainer") {
-              `%||%` <- function(a,b) if (is.null(a)) b else a
-              keys <- union(names(ax %||% list()), names(ay %||% list()))
-              out <- vector("list", length(keys)); names(out) <- keys
-              for (nm in keys) {
-                vx <- ax[[nm]]; vy <- ay[[nm]]
-                if (isTRUE(identical(vx, vy))) out[[nm]] <- vx else out[[nm]] <- sentinel
-              }
-              out
-            }
+  for (j in seq_along(objects)[-1L]) {
+    md_j  <- Metadata(objects[[j]])
+    key_j <- key_from_md(md_j)
+    if (anyDuplicated(key_j)) {
+      stop("Rows in Metadata of object ", j, " are not unique with respect to 'match_by'.")
+    }
+    idx <- match(key_ref, key_j)
+    if (anyNA(idx)) {
+      missing_keys <- unique(key_ref[is.na(idx)])
+      stop("Some runs in object 1 are not present in object ", j,
+           " when matching by ", paste(match_by, collapse = ", "), ":\n",
+           paste(missing_keys, collapse = ", "))
+    }
+    idx_list[[j]] <- idx
+  }
 
-            # Union two data.frames by rows (align columns, fill missing with NA)
-            rbind_union <- function(a, b) {
-              cols <- union(names(a), names(b))
-              add_missing <- function(df) {
-                missing <- setdiff(cols, names(df))
-                for (m in missing) df[[m]] <- NA
-                df[cols]
-              }
-              a <- add_missing(a)
-              b <- add_missing(b)
-              out <- rbind(a, b)
-              rownames(out) <- c(rownames(a), rownames(b))
-              out
-            }
+  ## Common invariants: TimeTrace, TimeUnits, StimulusTrace, StimulusUnits
+  tt_ref   <- TimeTrace(objects[[1L]])
+  tu_ref   <- TimeUnits(objects[[1L]])
+  stim_ref <- StimulusTrace(objects[[1L]])
+  su_ref   <- StimulusUnits(objects[[1L]])
 
-            # Add difference columns from info lists; character -> factor
-            add_info_diff_cols <- function(chm, chx, chy_renamed, info_x, info_y, prefix) {
-              nx <- length(chx); ny <- length(chy_renamed)
-              pos_x <- seq_len(nx)
-              pos_y <- nx + seq_len(ny)
-              keys <- union(names(info_x %||% list()), names(info_y %||% list()))
-              for (nm in keys) {
-                vx <- info_x[[nm]]
-                vy <- info_y[[nm]]
-                # treat NULL as NA; skip if identical (including both NULL)
-                if (isTRUE(identical(vx, vy))) next
-                colname <- make.unique(c(names(chm), paste0(prefix, ".", nm)))[ncol(chm) + 1L]
-                vec <- rep(NA, nx + ny)
-                vec[pos_x] <- if (length(vx)) vx else NA
-                vec[pos_y] <- if (length(vy)) vy else NA
-                # coerce character to factor
-                if (is.character(vec) || is.character(vx) || is.character(vy)) {
-                  chm[[colname]] <- factor(vec)
-                } else {
-                  chm[[colname]] <- vec
-                }
-              }
-              chm
-            }
-            `%||%` <- function(a,b) if (is.null(a)) b else a
+  for (j in seq_along(objects)[-1L]) {
+    if (!identical(TimeUnits(objects[[j]]), tu_ref)) {
+      stop("TimeUnits differ between objects 1 and ", j, ".")
+    }
+    if (!isTRUE(all.equal(TimeTrace(objects[[j]]), tt_ref))) {
+      stop("TimeTrace differs between objects 1 and ", j, ".")
+    }
+    if (!identical(StimulusUnits(objects[[j]]), su_ref)) {
+      stop("StimulusUnits differ between objects 1 and ", j, ".")
+    }
+    if (!isTRUE(all.equal(StimulusTrace(objects[[j]]), stim_ref))) {
+      stop("StimulusTrace differs between objects 1 and ", j, ".")
+    }
+  }
 
-            ## --- checks & alignment -------------------------------------------------
-            # Same layout?
-            lay_x <- layout_of(x@Data)
-            lay_y <- layout_of(y@Data)
-            if (!lay_x %in% c("list_of_arrays", "list_of_lists"))
-              stop("Unsupported data layout in 'x'. Must be list-of-arrays or list-of-lists.")
-            if (lay_y != lay_x)
-              stop("Both inputs must use the same data layout. Got x=", lay_x, ", y=", lay_y, ".")
+  ## Channel names and prefixes ----------------------------------------------
+  ch_list <- lapply(objects, Channels)
+  n_ch    <- vapply(ch_list, length, integer(1))
 
-            # Align Y rows to X by match_by
-            idx_y <- align_by_key(x@Metadata, y@Metadata, match_by)
+  ## Prefixes: use list names when present, otherwise "set1", "set2", ...
+  if (is.null(prefixes)) {
+    prefixes <- names(objects)
+    if (is.null(prefixes)) prefixes <- rep("", length(objects))
+    empty <- which(!nzchar(prefixes))
+    if (length(empty)) {
+      prefixes[empty] <- paste0("set", seq_along(empty))
+    }
+  } else {
+    if (length(prefixes) != length(objects)) {
+      stop("'prefixes' must have the same length as 'objects'.")
+    }
+  }
 
-            # Basic invariants that must match
-            if (!isTRUE(all.equal(x@TimeTrace, y@TimeTrace)))
-              stop("TimeTrace differs between 'x' and 'y'.")
-            if (!identical(x@TimeUnits, y@TimeUnits))
-              stop("TimeUnits differ between 'x' and 'y'.")
-            # Stimulus: allow both empty; if present, must match
-            if (length(x@StimulusTrace) != length(y@StimulusTrace) ||
-                (length(x@StimulusTrace) > 0 && !isTRUE(all.equal(x@StimulusTrace, y@StimulusTrace))))
-              stop("StimulusTrace differs between 'x' and 'y'.")
-            if (!identical(x@StimulusUnits, y@StimulusUnits))
-              stop("StimulusUnits differ between 'x' and 'y'.")
+  new_ch_list <- mapply(function(pref, ch) {
+    if (!length(ch)) return(character(0L))
+    if (nzchar(pref)) paste(pref, ch, sep = "_") else ch
+  }, pref = prefixes, ch = ch_list, SIMPLIFY = FALSE)
 
-            # Reorder y to match x
-            md_x <- x@Metadata
-            md_y <- y@Metadata[idx_y, , drop = FALSE]
-            data_x <- x@Data
-            data_y <- y@Data[idx_y]
-stop("this method was found not to be required currently, maybe helpful in future. needs to make unique channel names w reasonable prefix and rename in cannels column as well cas matrix/list names")
-            # Prepare channel names and potential renaming for y
-            chx <- x@Channels
-            chy <- y@Channels
-            new_all <- make.unique(c(chx, chy), sep = ".y")
-            chy_renamed <- new_all[(length(chx) + 1L):length(new_all)]
-            new_channels <- c(chx, chy_renamed)
-            # map original y channel -> renamed
-            y_ch_map <- setNames(chy_renamed, chy)
+  new_channels <- unlist(new_ch_list, use.names = FALSE)
 
-            ## --- merge Data ---------------------------------------------------------
-            if (lay_x == "list_of_lists") {
-              # Each trial is a list of channels
-              merged_data <- Map(function(cx, cy) {
-                # rename y channel names, then concatenate and reorder to new_channels
-                names(cy) <- y_ch_map[names(cy)]
-                out <- c(cx, cy)
-                out[new_channels]  # ensure order
-              }, data_x, data_y)
+  ## For each object: map old channel -> new channel
+  rename_map_list <- Map(function(old, new) {
+    if (!length(old)) return(setNames(character(0), character(0)))
+    setNames(new, old)
+  }, old = ch_list, new = new_ch_list)
 
-            } else if (lay_x == "list_of_arrays") {
-              # Each trial is an array [time × something × channel]
-              merged_data <- mapply(function(ax, ay) {
-                if (!is.array(ax) || !is.array(ay) || length(dim(ax)) < 3L || length(dim(ay)) < 3L)
-                  stop("Expected per-trial arrays with at least 3 dimensions.")
-                dx <- dim(ax); dy <- dim(ay)
-                if (!identical(dx[1:2], dy[1:2]))
-                  stop("Non-channel dimensions of per-trial arrays do not match between 'x' and 'y'.")
+  ## Global positions of each object's channels in the merged vector
+  offsets  <- c(0L, cumsum(n_ch))
+  pos_list <- lapply(seq_along(n_ch), function(j) {
+    if (n_ch[j] == 0L) integer(0L) else seq.int(offsets[j] + 1L, offsets[j + 1L])
+  })
 
-                kx <- dx[3L]; ky <- dy[3L]
-                out <- array(NA_real_, dim = c(dx[1L], dx[2L], kx + ky))
-                out[, , seq_len(kx)] <- ax
-                out[, , kx + seq_len(ky)] <- ay
+  ## Align Channel_Metadata rows to channel vector ----------------------------
+  align_chmeta_to_channels <- function(chm, channels) {
+    if (!is.data.frame(chm) || nrow(chm) == 0L) {
+      return(data.frame(row.names = channels))
+    }
+    rn <- rownames(chm)
+    if (!is.null(rn) && all(channels %in% rn)) {
+      chm <- chm[channels, , drop = FALSE]
+      rownames(chm) <- channels
+      return(chm)
+    }
+    if ("Channel" %in% names(chm)) {
+      if (!all(channels %in% chm$Channel)) {
+        stop("Channel_Metadata is missing rows for some channels.")
+      }
+      chm <- chm[match(channels, chm$Channel), , drop = FALSE]
+      rownames(chm) <- channels
+      return(chm)
+    }
+    if (nrow(chm) == length(channels)) {
+      rownames(chm) <- channels
+      return(chm)
+    }
+    stop("Unable to align Channel_Metadata to channels (incomplete or mismatched rows).")
+  }
 
-                # set dimnames, with channel names = new_channels
-                dnx <- dimnames(ax)
-                dny <- dimnames(ay)
-                # derive time/trial names from x if present
-                tnames <- if (!is.null(dnx)) dnx[[1]] else NULL
-                rnames <- if (!is.null(dnx) && length(dnx) >= 2L) dnx[[2]] else NULL
-                dimnames(out) <- list(tnames, rnames, new_channels)
-                out
-              }, data_x, data_y, SIMPLIFY = FALSE)
+  ## Build merged Channel_Metadata (existing columns only) --------------------
+  chm_aligned_list <- mapply(function(obj, old_ch, new_ch) {
+    chm <- obj@Channel_Metadata
+    chm <- align_chmeta_to_channels(chm, old_ch)
+    if (nrow(chm)) {
+      rownames(chm) <- new_ch
+      if ("Channel" %in% names(chm)) chm$Channel <- new_ch
+    } else {
+      chm <- data.frame(row.names = new_ch)
+    }
+    chm
+  }, obj = objects, old_ch = ch_list, new_ch = new_ch_list, SIMPLIFY = FALSE)
 
-            } else {
-              stop("Unexpected layout guard.")
-            }
+  all_cols <- unique(unlist(lapply(chm_aligned_list, names)))
+  chm_completed <- lapply(chm_aligned_list, function(df) {
+    if (!length(all_cols)) return(df)
+    missing <- setdiff(all_cols, names(df))
+    for (m in missing) df[[m]] <- NA
+    df[all_cols]
+  })
+  chm_merged <- do.call(rbind, chm_completed)
+  if (nrow(chm_merged)) {
+    chm_merged <- chm_merged[new_channels, , drop = FALSE]
+  } else {
+    chm_merged <- data.frame(row.names = new_channels)
+  }
 
-            ## --- merge Channel_Metadata ---------------------------------------------
-            chm_x <- align_chmeta_to_channels(x@Channel_Metadata, chx)
-            chm_y <- align_chmeta_to_channels(y@Channel_Metadata, chy, for_y = TRUE, rename_map = y_ch_map)
+  ## SubjectInfo / ExamInfo: diverging fields -> Channel_Metadata -------------
+  `%||%` <- function(a, b) if (is.null(a)) b else a
 
-            # tag provenance
-            chm_x$Source <- factor(rep("x", length(chx)), levels = c("x","y"))
-            chm_y$Source <- factor(rep("y", length(chy)), levels = c("x","y"))
+  add_info_diff_cols_multi <- function(chm, info_list, prefix, pos_list) {
+    info_list <- lapply(info_list, function(x) x %||% list())
+    keys <- unique(unlist(lapply(info_list, names)))
+    if (!length(keys)) return(chm)
 
-            # union & bind
-            chm <- rbind_union(chm_x, chm_y)
-            chm <- chm[ new_channels, , drop = FALSE ]  # ensure row order
+    n_total <- nrow(chm)
+    n_obj   <- length(info_list)
 
-            # Differences from SubjectInfo and ExamInfo -> columns
-            s_x <- x@SubjectInfo; s_y <- y@SubjectInfo
-            r_x <- x@ExamInfo
-            r_y <- y@ExamInfo
+    for (nm in keys) {
+      vals <- lapply(info_list, function(info) info[[nm]])
 
-            chm <- add_info_diff_cols(chm, chx, chy_renamed, s_x, s_y, prefix = "SubjectInfo")
-            chm <- add_info_diff_cols(chm, chx, chy_renamed, r_x, r_y, prefix = "ExamInfo")
-
-            # Ensure rownames are channels
-            rownames(chm) <- new_channels
-
-            # Build merged SubjectInfo / ExamInfo using sentinel for differing fields
-            subj_merged <- merge_info_lists_with_sentinel(x@SubjectInfo, y@SubjectInfo)
-            exam_merged <- merge_info_lists_with_sentinel(x@ExamInfo, y@ExamInfo)
-
-            ## --- construct result ----------------------------------------------------
-            out <- new("EPhysContainer",
-                       Metadata        = md_x,
-                       Data            = merged_data,
-                       ExamInfo        = exam_merged,
-                       SubjectInfo     = subj_merged,
-                       Imported        = x@Imported,
-                       TimeTrace       = x@TimeTrace,
-                       Channels        = new_channels,
-                       Channel_Metadata= chm,
-                       StimulusTrace   = x@StimulusTrace,
-                       TimeUnits       = x@TimeUnits,
-                       StimulusUnits   = x@StimulusUnits
-            )
-            validObject(out)
-            out
+      ## Skip if all values are identical (including all NULL)
+      first <- vals[[1L]]
+      all_identical <- TRUE
+      if (length(vals) > 1L) {
+        for (j in 2:length(vals)) {
+          if (!isTRUE(identical(vals[[j]], first))) {
+            all_identical <- FALSE
+            break
           }
-)
+        }
+      }
+      if (all_identical) next
+
+      colname <- paste0(prefix, ".", nm)
+      if (colname %in% names(chm)) {
+        colname <- make.unique(c(names(chm), colname))[ncol(chm) + 1L]
+      }
+
+      vec <- rep(NA, n_total)
+      for (j in seq_len(n_obj)) {
+        vj  <- vals[[j]]
+        pos <- pos_list[[j]]
+        if (!length(pos)) next
+        if (is.null(vj) || length(vj) == 0L) next
+        if (length(vj) == 1L) {
+          vec[pos] <- vj
+        } else if (length(vj) == length(pos)) {
+          vec[pos] <- vj
+        } else {
+          ## Fallback: recycle first element
+          vec[pos] <- vj[1L]
+        }
+      }
+
+      any_char <- any(vapply(vals, function(v) is.character(v) || is.factor(v), logical(1)))
+      if (any_char) {
+        chm[[colname]] <- factor(vec)
+      } else {
+        chm[[colname]] <- vec
+      }
+    }
+    chm
+  }
+
+  subj_list <- lapply(objects, function(o) o@SubjectInfo)
+  exam_list <- lapply(objects, function(o) o@ExamInfo)
+
+  chm_merged <- add_info_diff_cols_multi(chm_merged, subj_list, "SubjectInfo", pos_list)
+  chm_merged <- add_info_diff_cols_multi(chm_merged, exam_list, "ExamInfo",  pos_list)
+
+  ## Build merged SubjectInfo / ExamInfo with only non-diverging fields -------
+  merge_info_non_diverging <- function(info_list) {
+    info_list <- lapply(info_list, function(x) x %||% list())
+    keys <- unique(unlist(lapply(info_list, names)))
+    out  <- vector("list", length(keys))
+    names(out) <- keys
+    keep <- logical(length(keys))
+    for (i in seq_along(keys)) {
+      nm   <- keys[[i]]
+      vals <- lapply(info_list, function(info) info[[nm]])
+      first <- vals[[1L]]
+      all_identical <- TRUE
+      if (length(vals) > 1L) {
+        for (j in 2:length(vals)) {
+          if (!isTRUE(identical(vals[[j]], first))) {
+            all_identical <- FALSE
+            break
+          }
+        }
+      }
+      if (all_identical) {
+        out[[i]] <- first
+        keep[i]  <- TRUE
+      }
+    }
+    out[keep]
+  }
+
+  subj_merged <- merge_info_non_diverging(subj_list)
+  exam_merged <- merge_info_non_diverging(exam_list)
+
+  imported <- objects[[1L]]@Imported
+
+  list(
+    base_class         = base_class,
+    match_by           = match_by,
+    metadata           = md_ref,
+    idx_list           = idx_list,
+    channels           = new_channels,
+    old_channels       = ch_list,
+    new_channels_by_obj = new_ch_list,
+    rename_map_list    = rename_map_list,
+    positions_list     = pos_list,
+    channel_metadata   = chm_merged,
+    subject_info       = subj_merged,
+    exam_info          = exam_merged,
+    time_trace         = tt_ref,
+    time_units         = tu_ref,
+    stimulus_trace     = stim_ref,
+    stimulus_units     = su_ref,
+    imported           = imported
+  )
+}
+
+## -------------------------------------------------------------------------
+## EPhysContinuous: merge along channel dimension
+## -------------------------------------------------------------------------
+
+#' Merge multiple EPhysContinuous objects along channels
+#'
+#' @param objects  List of EPhysContinuous objects.
+#' @param match_by Columns in Metadata used to align runs.
+#' @param prefixes Optional character vector of prefixes for channel names
+#'   (one per object). If NULL, list names / "set1", "set2", … are used.
+#' @export
+MergeContinuous <- function(objects,
+                            match_by = c("Step", "Experiment", "Run"),
+                            prefixes = NULL) {
+  if (!is.list(objects) || length(objects) == 0L) {
+    stop("'objects' must be a non-empty list.")
+  }
+  if (!all(vapply(objects, function(x) methods::is(x, "EPhysContinuous"), logical(1)))) {
+    stop("All elements of 'objects' must be 'EPhysContinuous'.")
+  }
+
+  common <- .merge_EPhysContainer_common(objects,
+                                         match_by = match_by,
+                                         prefixes = prefixes)
+
+  if (!identical(common$base_class, "EPhysContinuous")) {
+    warning("Merged container base_class is ", common$base_class,
+            "; proceeding but this was expected to be 'EPhysContinuous'.")
+  }
+
+  md_ref   <- common$metadata
+  idx_list <- common$idx_list
+  new_ch   <- common$channels
+  old_ch   <- common$old_channels
+  pos_list <- common$positions_list
+
+  arr_ref <- objects[[1L]]@Data
+  if (!is.array(arr_ref) || length(dim(arr_ref)) != 3L) {
+    stop("EPhysContinuous@Data must be a 3D numeric array [time × run × channel].")
+  }
+
+  n_time <- dim(arr_ref)[1L]
+  n_runs <- nrow(md_ref)
+  n_tot  <- length(new_ch)
+
+  out <- array(NA_real_, dim = c(n_time, n_runs, n_tot))
+
+  dn         <- dimnames(arr_ref)
+  time_names <- if (length(dn) >= 1L) dn[[1L]] else NULL
+  run_names  <- if (length(dn) >= 2L) dn[[2L]] else NULL
+
+  for (j in seq_along(objects)) {
+    obj   <- objects[[j]]
+    arr_j <- obj@Data
+    if (!is.array(arr_j) || length(dim(arr_j)) != 3L) {
+      stop("All objects must have 3D numeric Data arrays.")
+    }
+    if (!isTRUE(all.equal(dim(arr_j)[1L], n_time))) {
+      stop("Time dimension of Data differs for object ", j, ".")
+    }
+
+    idx_runs <- idx_list[[j]]
+    if (dim(arr_j)[2L] < length(idx_runs)) {
+      stop("Object ", j, " has fewer runs than required by 'match_by' alignment.")
+    }
+    arr_j_aligned <- arr_j[, idx_runs, , drop = FALSE]
+    if (!identical(dim(arr_j_aligned)[2L], n_runs)) {
+      stop("After alignment, run dimension mismatch for object ", j, ".")
+    }
+
+    pos    <- pos_list[[j]]
+    n_ch_j <- length(old_ch[[j]])
+    if (!identical(length(pos), n_ch_j) ||
+        !identical(dim(arr_j_aligned)[3L], n_ch_j)) {
+      stop("Channel dimension of object ", j,
+           " does not match length(Channels(object)).")
+    }
+
+    out[, , pos] <- arr_j_aligned
+  }
+
+  dimnames(out) <- list(
+    time    = time_names,
+    run     = if (!is.null(run_names)) run_names else rownames(md_ref),
+    channel = new_ch
+  )
+
+  newEPhysContinuous(
+    Data             = out,
+    TimeTrace        = common$time_trace,
+    Metadata         = md_ref,
+    Channels         = new_ch,
+    Channel_Metadata = common$channel_metadata,
+    StimulusTrace    = common$stimulus_trace,
+    TimeUnits        = common$time_units,
+    StimulusUnits    = common$stimulus_units,
+    ExamInfo         = common$exam_info,
+    SubjectInfo      = common$subject_info,
+    Imported         = common$imported
+  )
+}
+
+## -------------------------------------------------------------------------
+## EPhysEvents: merge along channel dimension
+## -------------------------------------------------------------------------
+
+#' Merge multiple EPhysEvents objects along channels
+#'
+#' @param objects  List of EPhysEvents objects.
+#' @param match_by Columns in Metadata used to align runs.
+#' @param prefixes Optional character vector of prefixes for channel names
+#'   (one per object). If NULL, list names / "set1", "set2", … are used.
+#' @export
+MergeEvents <- function(objects,
+                        match_by = c("Step", "Experiment", "Run"),
+                        prefixes = NULL) {
+  if (!is.list(objects) || length(objects) == 0L) {
+    stop("'objects' must be a non-empty list.")
+  }
+  if (!all(vapply(objects, function(x) methods::is(x, "EPhysEvents"), logical(1)))) {
+    stop("All elements of 'objects' must be 'EPhysEvents'.")
+  }
+
+  common <- .merge_EPhysContainer_common(objects,
+                                         match_by = match_by,
+                                         prefixes = prefixes)
+
+  if (!identical(common$base_class, "EPhysEvents")) {
+    warning("Merged container base_class is ", common$base_class,
+            "; proceeding but this was expected to be 'EPhysEvents'.")
+  }
+
+  md_ref          <- common$metadata
+  idx_list        <- common$idx_list
+  new_ch          <- common$channels
+  old_ch          <- common$old_channels
+  new_byobj       <- common$new_channels_by_obj
+  rename_map_list <- common$rename_map_list
+
+  n_runs      <- nrow(md_ref)
+  merged_data <- vector("list", length = n_runs)
+
+  for (r in seq_len(n_runs)) {
+    per_obj_lists <- vector("list", length(objects))
+
+    for (j in seq_along(objects)) {
+      obj    <- objects[[j]]
+      data_j <- obj@Data
+
+      idx_run <- idx_list[[j]][r]
+      if (idx_run < 1L || idx_run > length(data_j)) {
+        stop("Run index ", idx_run, " out of range for object ", j, ".")
+      }
+
+      run_list <- data_j[[idx_run]]
+      if (!is.list(run_list)) {
+        stop("Data[[", idx_run, "]] of object ", j,
+             " is not a list of per-channel event vectors.")
+      }
+
+      nm <- names(run_list)
+      if (is.null(nm) || !length(nm)) {
+        ## Fall back: assume order equals Channels(object)
+        ch_expected <- old_ch[[j]]
+        if (length(run_list) != length(ch_expected)) {
+          stop("Cannot infer channel names for object ", j,
+               " in run ", r, " (unnamed channels with unexpected length).")
+        }
+        names(run_list) <- new_byobj[[j]]
+      } else {
+        missing <- setdiff(nm, names(rename_map_list[[j]]))
+        if (length(missing)) {
+          stop("Some channels in Data[[", idx_run, "]] of object ", j,
+               " are not listed in Channels(object): ",
+               paste(missing, collapse = ", "))
+        }
+        names(run_list) <- unname(rename_map_list[[j]][nm])
+      }
+
+      per_obj_lists[[j]] <- run_list
+    }
+
+    merged_data[[r]] <- do.call(c, per_obj_lists)
+  }
+
+  if ("RunUID" %in% names(md_ref)) {
+    names(merged_data) <- as.character(md_ref$RunUID)
+  } else {
+    names(merged_data) <- sprintf("Run%03d", seq_len(n_runs))
+  }
+
+  newEPhysEvents(
+    Data             = merged_data,
+    TimeTrace        = common$time_trace,
+    Metadata         = md_ref,
+    Channels         = new_ch,
+    Channel_Metadata = common$channel_metadata,
+    StimulusTrace    = common$stimulus_trace,
+    TimeUnits        = common$time_units,
+    StimulusUnits    = common$stimulus_units,
+    ExamInfo         = common$exam_info,
+    SubjectInfo      = common$subject_info,
+    Imported         = common$imported
+  )
+}

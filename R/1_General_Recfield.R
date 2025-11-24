@@ -99,7 +99,6 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
               } else {
                 return(m)
               }
-
             }
 
             res_list<-lapply(
@@ -116,7 +115,7 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
             r50<-lapply(res_list, function(x){lapply(x, function(y){as.data.frame(y$r50)})})
             r50<-nested2df(X,r50)
             if(ReturnMap){
-              rf_map<-lapply(res_list, function(x){lapply(x, function(y){as.data.frame(y$map)})})
+              rf_map<-lapply(res_list, function(x){lapply(x, function(y){y$map})}) #as.data.frame(y$map)
               rf_map<-nested2df(X,rf_map)
               return(list(maps    = rf_map,
                           metrics = r50))
