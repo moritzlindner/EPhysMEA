@@ -116,10 +116,32 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
             r50<-nested2df(X,r50)
             if(ReturnMap){
               rf_map<-lapply(res_list, function(x){lapply(x, function(y){y$map})}) #as.data.frame(y$map)
-              rf_map<-nested2df(X,rf_map)
+              rf_map<-nested_maps_to_df(X,rf_map)
               return(list(maps    = rf_map,
                           metrics = r50))
             } else {
               r50
             }
           })
+
+#' @keywords internal
+nested_maps_to_df <- function(X, nestedlist) {
+  md <- Metadata(X)
+  ch <- Channels(X)
+
+  run_dfs <- lapply(seq_along(nestedlist), function(i) {
+    run <- nestedlist[[i]]
+    if (!is.null(names(run))) run <- run[ch]
+
+    rows <- lapply(names(run), function(chan_name) {
+      v <- run[[chan_name]]  # long df x,y,value
+      v$Channel     <- chan_name
+      v$RunUID      <- md$RunUID[i]
+      v$RecordingID <- md$RecordingID[i]
+      v
+    })
+    do.call(rbind, rows)
+  })
+
+  do.call(rbind, run_dfs)
+}

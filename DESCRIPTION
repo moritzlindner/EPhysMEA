@@ -1,7 +1,7 @@
 Package: EPhysMEA
 Type: Package
 Title: Analysis Tools for Multichannel Electrophysiology
-Version: 0.1.0
+Version: 0.1.1
 Author: person("Moritz", "Lindner", email = "moritz@lindnerlab.de", role =
     c("aut", "cre"))
 Description: Companion analysis package for 'EPhysData' providing binning and
