@@ -19,7 +19,7 @@
 #'   (RecordingID/rownames) or channel names, depending on layout.
 #' @return A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
 #'   is attached as \code{attr(., "raster_data")}.
-#'   @importFrom ggpubr theme_pubr
+#'
 #' @examples
 #' \dontrun{
 #' # Case 1: object has exactly one channel overall
@@ -30,6 +30,8 @@
 #' }
 #' @importClassesFrom EPhysData EPhysEvents
 #' @importFrom EPhysData Metadata Channels
+#' @importFrom ggpubr theme_pubr
+#' @importFrom ggplot2 ggplot aes geom_blank geom_linerange scale_y_continuous expansion coord_cartesian labs theme element_blank
 #' @name ggEventRaster
 setGeneric("ggEventRaster", function(X, ...)
   standardGeneric("ggEventRaster"))
@@ -44,10 +46,6 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                    stimulus_height = 0.6,
                    row_labels      = NULL) {
 
-            # ---- deps
-            if (!requireNamespace("ggplot2", quietly = TRUE)) {
-              stop("Package 'ggplot2' is required.")
-            }
             md  <- Metadata(X)
             chs <- Channels(X)
             n_rows <- if (!is.null(md)) nrow(md) else length(X@Data)
@@ -157,19 +155,19 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
             blank_df <- data.frame(t = xlim_use[1], y = seq_along(order_keys))
 
             # ---- Plot
-            p_raster <- ggplot2::ggplot(df, ggplot2::aes(x = t)) +
-              ggplot2::geom_blank(data = blank_df, ggplot2::aes(x = t, y = y)) +
-              ggplot2::geom_linerange(
-                ggplot2::aes(ymin = y - tick_height/2, ymax = y + tick_height/2),
+            p_raster <- ggplot(df, aes(x = t)) +
+              geom_blank(data = blank_df, aes(x = t, y = y)) +
+              geom_linerange(
+                aes(ymin = y - tick_height/2, ymax = y + tick_height/2),
                 linewidth = line_size, na.rm = TRUE
               ) +
-              ggplot2::scale_y_continuous(
+              scale_y_continuous(
                 breaks = seq_along(order_keys),
                 labels = unname(if (caseA) rowlabs[as.character(order_keys)] else rowlabs),
-                expand = ggplot2::expansion(mult = c(0.02, 0.02))
+                expand = expansion(mult = c(0.02, 0.02))
               ) +
-              ggplot2::coord_cartesian(xlim = xlim_use) +
-              ggplot2::labs(
+              coord_cartesian(xlim = xlim_use) +
+              labs(
                 x = "Time (s)",
                 y = if (caseA) "Trace (Metadata row)" else "Channel",
                 title = if (caseA)
@@ -178,9 +176,9 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                   "Raster: Single trace, per channel"
               ) +
               theme_pubr(base_size = 8) +
-              ggplot2::theme(
-                panel.grid.major.y = ggplot2::element_blank(),
-                panel.grid.minor   = ggplot2::element_blank()
+              theme(
+                panel.grid.major.y = element_blank(),
+                panel.grid.minor   = element_blank()
               )
 
             p_out <- p_raster

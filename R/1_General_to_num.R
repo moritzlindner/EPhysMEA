@@ -20,7 +20,6 @@
 #' a warning about returning raw magnitudes.
 #'
 #' @keywords internal
-#' @rdname step_stim_resp_metrics
 #' @importFrom units set_units drop_units deparse_unit
 #'
 #' @examples

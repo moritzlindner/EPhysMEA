@@ -25,7 +25,6 @@ ggEventRaster(X, ...)
 \value{
 A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
   is attached as \code{attr(., "raster_data")}.
-  @importFrom ggpubr theme_pubr
 }
 \description{
 Expects \code{object} to be in one of two valid formats:

@@ -34,16 +34,17 @@ Recfield(
 \arguments{
 \item{X}{An \code{EPhysEvents} X.}
 
-\item{StimSeq}{3D array \code{[rows, cols, frames]} of stimulus masks (0/1 or weights).}
+\item{StimSeq}{Numeric/integer/logical 3D array \code{[nrow, ncol, nframes]}.
+Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
+(nonzero values are treated as ON/weights).}
 
-\item{change_times}{Numeric vector of frame onset times (s); length \code{nframes} or \code{nframes+1}.}
+\item{change_times}{Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.}
 
 \item{pixel_width}{Numeric scalar (e.g., µm per pixel) for \code{recfield_r50_radial()}.}
 
-\item{baserate_win}{Optional numeric scalar (s). If supplied, a global baseline rate
-is computed once per run from \code{[change_times[1] - baserate_win, change_times[1])}
-and used for all frames in that run. If \code{NULL}, per-frame baseline from
-\code{step_stim_resp_metrics()} is used.}
+\item{baserate_win}{Optional numeric scalar (s). If supplied, the baseline
+rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
+and used for all frames.}
 
 \item{ReturnMap}{Logical; if \code{TRUE}, also returns the individual heatmaps.}
 

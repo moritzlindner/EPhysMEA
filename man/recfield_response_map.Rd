@@ -20,13 +20,11 @@ recfield_response_map(
 Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
 (nonzero values are treated as ON/weights).}
 
-\item{change_times}{Numeric vector (seconds) of frame onset times.
-Must have length \code{nframes} or \code{nframes + 1}.}
+\item{change_times}{Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.}
 
 \item{baserate_win}{Optional numeric scalar (s). If supplied, the baseline
 rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
-and used for all frames. If \code{NULL} (default), the baseline from
-\code{step_stim_resp_metrics()} is used per frame.}
+and used for all frames.}
 
 \item{...}{Additional arguments passed to
 \code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}} (e.g., \code{trans_win},

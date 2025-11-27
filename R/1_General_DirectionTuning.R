@@ -10,7 +10,7 @@
 #'         \code{\link{direction_preferred_direction}} (preferred direction in degrees).
 #' }
 #' It returns two tidy data.frames (analogous to \code{Recfield}): a long-form stack of
-#' per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
+#' per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics. Channels without enough events/spikes to reach a resolution for DSI of at least 0.2 are ignored and results set to NA.
 #'
 #' @details
 #' \itemize{
@@ -24,8 +24,7 @@
 #' }
 #'
 #' @param X      An \code{EPhysEvents} X.
-#' @param windows_df  Data frame with at least columns \code{start}, \code{end}, and
-#'                    \code{direction_deg} (degrees).
+#' @inheritParams direction_response_amplitude
 #' @param check_equal_durations Logical; if \code{TRUE} (default) enforce identical window
 #'                    durations across rows of \code{windows_df} within \code{tol}.
 #' @param tol         Numeric tolerance for duration equality (seconds). Default \code{1e-9}.
@@ -108,12 +107,18 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
               )
 
               # metrics from the map
-              dsi <- direction_selectivity_index(map_df,
-                                                 resp  = "Response_Amplitude",
-                                                 angle = "direction_deg")
-              pd  <- direction_preferred_direction(map_df,
+              if (sum(map_df$Response_Amplitude*(map_df$end-windows_df$start))>=10){ # require a minimum total of 10 spikes within the windows yielding a resolution of 0.2
+                dsi <- direction_selectivity_index(map_df,
                                                    resp  = "Response_Amplitude",
                                                    angle = "direction_deg")
+                pd  <- direction_preferred_direction(map_df,
+                                                     resp  = "Response_Amplitude",
+                                                     angle = "direction_deg")
+              } else {
+                dsi <- NA
+                pd <- NA
+              }
+
 
               met_df <- data.frame(
                 dsi                 = as.numeric(dsi),

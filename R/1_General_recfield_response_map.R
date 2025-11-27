@@ -23,12 +23,10 @@
 #' @param StimSeq Numeric/integer/logical 3D array \code{[nrow, ncol, nframes]}.
 #'   Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
 #'   (nonzero values are treated as ON/weights).
-#' @param change_times Numeric vector (seconds) of frame onset times.
-#'   Must have length \code{nframes} or \code{nframes + 1}.
+#' @param change_times Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.
 #' @param baserate_win Optional numeric scalar (s). If supplied, the baseline
 #'   rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
-#'   and used for all frames. If \code{NULL} (default), the baseline from
-#'   \code{step_stim_resp_metrics()} is used per frame.
+#'   and used for all frames.
 #' @param ... Additional arguments passed to
 #'   \code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}} (e.g., \code{trans_win},
 #'   \code{binwidth}, \code{smooth}, \code{latency_*}).
@@ -60,26 +58,19 @@ recfield_response_map <- function(
   if (length(dim(StimSeq)) != 3L) stop("StimSeq must be a 3D array [rows × cols × frames].")
   dims <- dim(StimSeq)
   nrow <- dims[1]; ncol <- dims[2]; nframes <- dims[3]
+  change_times<-to_num(change_times)
+  baserate_win<-to_num(baserate_win)
 
   # ---- Validate change_times and build offsets ----
   if (!is.numeric(change_times) || !length(change_times)) {
     stop("'change_times' must be a numeric vector of onsets (seconds).")
   }
-  if (length(change_times) < nframes) {
-    stop("length(change_times) must be nframes or nframes+1 (got ", length(change_times), ").")
+  if (length(change_times) < nframes+1) {
+    stop("length(change_times) must be nframes+1 (got ", length(change_times), ").")
   }
   step_onsets <- as.numeric(change_times[seq_len(nframes)])
+  step_offsets <- as.numeric(change_times[seq_len(nframes) + 1L])
 
-  if (length(change_times) >= nframes + 1L) {
-    step_offsets <- as.numeric(change_times[seq_len(nframes) + 1L])
-  } else {
-    diffs <- diff(step_onsets)
-    if (!length(diffs) || !all(is.finite(diffs))) {
-      stop("Cannot infer last frame duration from 'change_times'. Provide nframes+1 onsets.")
-    }
-    frame_dur <- median(diffs)
-    step_offsets <- step_onsets + frame_dur
-  }
 
 
   # Normalize and sort spikes once
@@ -87,7 +78,7 @@ recfield_response_map <- function(
   x <- x[is.finite(x)]
 
   # ---- Optional global baseline rate (before first onset) ----
-  global_base_rate <- NULL
+  global_base_rate <- 0
   if (!is.null(baserate_win)) {
     stopifnot(is.numeric(baserate_win), length(baserate_win) == 1L, is.finite(baserate_win), baserate_win > 0)
     t0 <- step_onsets[1]
@@ -111,8 +102,7 @@ recfield_response_map <- function(
       ...
     )
     rate_trans <- m$Response_Amplitude
-    rate_base  <- if (is.null(global_base_rate)) m$Baseline_Rate else global_base_rate
-    amp <- rate_trans - rate_base
+    amp <- rate_trans - global_base_rate
 
     if (!is.finite(amp)) amp <- 0
 
@@ -120,20 +110,18 @@ recfield_response_map <- function(
     if (!is.null(dim(mask))) {
       nz <- (mask != 0)
       if (any(nz, na.rm = TRUE)) {
-        # Weighted accumulation if mask has weights; mean is taken over exposures (not weight-normalized)
         sum_map[nz]   <- sum_map[nz]   + amp * mask[nz]
         count_map[nz] <- count_map[nz] + 1L
       }
     }
   }
-
   # ---- Compute mean per pixel; never-stimulated pixels -> NA ----
   response_map <- matrix(NA_real_, nrow = nrow, ncol = ncol)
   idx <- count_map > 0L
-  # If masks can carry weights >1, you might prefer dividing by count_map or by total mask weight.
-  # The MATLAB-style accumulation corresponds to dividing by count_map (exposures), as below:
-  response_map[idx] <- sum_map[idx] / count_map[idx]
-
+  peak<-max(sum_map)
+  # if(is.na(peak)) peak <- 1
+  # if(peak==0) peak <- 1
+  response_map[idx] <- sum_map[idx] / count_map[idx] #peak
   response_map
 }
 

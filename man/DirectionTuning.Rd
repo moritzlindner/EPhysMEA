@@ -30,8 +30,15 @@ DirectionTuning(
 \arguments{
 \item{X}{An \code{EPhysEvents} X.}
 
-\item{windows_df}{Data frame with at least columns \code{start}, \code{end}, and
-\code{direction_deg} (degrees).}
+\item{windows_df}{A data.frame with at least the columns:
+\describe{
+  \item{\code{start}}{Window start time (s).}
+  \item{\code{end}}{Window end time (s) (right-open: spikes at \code{end} are excluded).}
+  \item{\code{direction_deg}}{Direction label (degrees). Not used in the computation,
+        kept for downstream tuning metrics.}
+}
+Optionally \code{window_id}. Time columns may be numeric or units
+convertible to seconds.}
 
 \item{check_equal_durations}{Logical; if \code{TRUE} (default) enforce identical window
 durations across rows of \code{windows_df} within \code{tol}.}
@@ -75,7 +82,7 @@ For each run (row of \code{Metadata}) and each channel, this method:
         \code{\link{direction_preferred_direction}} (preferred direction in degrees).
 }
 It returns two tidy data.frames (analogous to \code{Recfield}): a long-form stack of
-per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
+per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics. Channels without enough events/spikes to reach a resolution for DSI of at least 0.2 are ignored and results set to NA.
 }
 \details{
 \itemize{

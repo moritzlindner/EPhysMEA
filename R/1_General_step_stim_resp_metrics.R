@@ -212,8 +212,8 @@ step_stim_resp_metrics <- function(x,
 
   # Resting stability
   base_times <- x[x >= (step_onset - shinomoto_win) & x < step_onset]
-  Baseline_Rate <- length(base_times) / shinomoto_win
   if (!is.na(shinomoto_win)) {
+    Baseline_Rate <- length(base_times) / shinomoto_win
     if(length(base_times) == 0){
       Shinomoto_Baseline_LV <- 1
     } else {
@@ -222,6 +222,7 @@ step_stim_resp_metrics <- function(x,
     if (length(Shinomoto_Baseline_LV) == 0L)
       Shinomoto_Baseline_LV <- 1
   } else {
+    Baseline_Rate <- NA
     Shinomoto_Baseline_LV <- NA
   }
 
@@ -336,7 +337,7 @@ step_response_latency <- function(x,
 
 #' left Inclusive, right exclusive window counting
 #' @keywords internal
-#' @rdname step_stim_resp_metrics
+#' @noMd
 #' @param a,b Left () and right margins of window
 count_in <- function(x, a, b) {
   if (!length(x))

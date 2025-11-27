@@ -11,13 +11,8 @@
 #' table of r50 metrics.
 #'
 #' @param X An \code{EPhysEvents} X.
-#' @param StimSeq 3D array \code{[rows, cols, frames]} of stimulus masks (0/1 or weights).
-#' @param change_times Numeric vector of frame onset times (s); length \code{nframes} or \code{nframes+1}.
+#' @inheritParams recfield_response_map
 #' @param pixel_width Numeric scalar (e.g., µm per pixel) for \code{recfield_r50_radial()}.
-#' @param baserate_win Optional numeric scalar (s). If supplied, a global baseline rate
-#'   is computed once per run from \code{[change_times[1] - baserate_win, change_times[1])}
-#'   and used for all frames in that run. If \code{NULL}, per-frame baseline from
-#'   \code{step_stim_resp_metrics()} is used.
 #' @param ReturnMap Logical; if \code{TRUE}, also returns the individual heatmaps.
 #' @inheritParams EPhysData::`lapply-EPhys`
 #' @param ... Additional arguments forwarded to \code{\link{recfield_response_map}}
