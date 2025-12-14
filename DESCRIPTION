@@ -25,7 +25,9 @@ Imports:
     minpack.lm,
     reshape2,
     stats,
-    units
+    units,
+    waveslim,
+    imager
 Remotes:
     github::moritzlindner/EPhysData,
     github::moritzlindner/EPhysMethods

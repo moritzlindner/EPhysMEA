@@ -30,7 +30,7 @@ show a \code{cli} progress bar in sequential mode.}
     vector of length \code{m * n}).}
     \item{\code{na.rm}}{logical.  Should missing values (including \code{NaN})
     be omitted from the calculations?}
-    \item{\code{dims}}{integer: Which dimensions are regarded as \sQuote{rows} or
+    \item{\code{dims}}{integer number: Which dimensions are regarded as \sQuote{rows} or
     \sQuote{columns} to sum over.  For \code{row*}, the sum or mean is
     over dimensions \code{dims+1, \dots}; for \code{col*} it is over
     dimensions \code{1:dims}.}
