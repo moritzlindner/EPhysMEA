@@ -27,8 +27,7 @@ Import_ChannelData <- function(file_root) {
   spike_file <- paste0(file_root, "_sortedspikes.mat")
 
   if (!file.exists(spike_file)) {
-    warning("Spike data file not found: ", spike_file)
-    return(data.frame())
+    stop("Spike data file not found: ", spike_file)
   }
 
   # Use R.matlab to read header only (to inspect variable names)
@@ -41,8 +40,7 @@ Import_ChannelData <- function(file_root) {
   sig_vars <- all_vars[startsWith(all_vars, "sig.")]
 
   if (length(sig_vars) == 0) {
-    warning('No spike channel variables (starting with "sig_") found in file: ', spike_file)
-    return(data.frame())
+    stop('No spike channel variables (starting with "sig_") found in file: ', spike_file)
   }
 
   mat_data <- lapply(mat_data[sig_vars], function(x){as.vector(x)})

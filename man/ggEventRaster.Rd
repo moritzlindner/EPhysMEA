@@ -19,8 +19,13 @@ ggEventRaster(X, ...)
 
 \item{stimulus_height}{Relative height of the stimulus panel in \code{cowplot::plot_grid}. Default 0.6.}
 
-\item{row_labels}{Optional character vector of row labels; otherwise derived from Metadata
-(RecordingID/rownames) or channel names, depending on layout.}
+\item{row_labels}{Optional character vector of row labels; otherwise derived from Metadata}
+
+\item{background}{NULL (default) or the name of a Metadata column.
+If non-NULL, a background tile is drawn for each raster row, with
+`alpha` mapped to that column.}
+
+\item{background_fill}{(RecordingID/rownames) or channel names, depending on layout.}
 }
 \value{
 A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data

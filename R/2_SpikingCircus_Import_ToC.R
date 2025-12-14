@@ -90,6 +90,14 @@ Import_ToC <- function(file_root,
   df_ev <- subset(df_ev, Stop != 0)
   df_ev$RecordingID<-as.integer(1:nrow(df_ev))
 
+
+  df_ev$Repeat <- ave(
+    seq_len(nrow(df_ev)),
+    df_ev$Experiment,
+    df_ev$Intensity,
+    FUN = seq_along
+  )
+
   # apply type mapping
   map <- read.table(type_assignment_file,
                     sep = "\t", header = FALSE,

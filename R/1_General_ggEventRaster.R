@@ -16,6 +16,10 @@
 #' @param show_stimulus Logical; if TRUE, try to compose a stimulus panel underneath. Default TRUE.
 #' @param stimulus_height Relative height of the stimulus panel in \code{cowplot::plot_grid}. Default 0.6.
 #' @param row_labels Optional character vector of row labels; otherwise derived from Metadata
+#' @param background NULL (default) or the name of a Metadata column.
+#'   If non-NULL, a background tile is drawn for each raster row, with
+#'   `alpha` mapped to that column.
+#' @param background_fill
 #'   (RecordingID/rownames) or channel names, depending on layout.
 #' @return A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
 #'   is attached as \code{attr(., "raster_data")}.
@@ -44,11 +48,24 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                    line_size       = 0.3,
                    show_stimulus   = TRUE,
                    stimulus_height = 0.6,
-                   row_labels      = NULL) {
+                   row_labels      = NULL,
+                   background      = NULL,
+                   background_fill = "black") {
 
             md  <- Metadata(X)
             chs <- Channels(X)
             n_rows <- if (!is.null(md)) nrow(md) else length(X@Data)
+
+            # optional background column check
+            if (!is.null(background)) {
+              if (is.null(md)) {
+                stop("`background` was specified, but Metadata(X) is NULL.")
+              }
+              if (!background %in% names(md)) {
+                stop("background column '", background, "' not found in Metadata(X).")
+              }
+            }
+
 
             # Determine layout case:
             caseA <- !is.null(chs) && length(chs) == 1L                # one channel across rows
@@ -90,9 +107,9 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                 spikes <- extract_spike_times(X@Data[[i]][[ch1]])
                 if (!is.null(tlim)) spikes <- spikes[spikes >= tlim[1] & spikes <= tlim[2]]
                 df <- rbind(df, if (length(spikes)) {
-                  data.frame(unit = i, label = i, channel = ch1, t = spikes, stringsAsFactors = FALSE)
+                  data.frame(runuid=md$RunUID[i], step=md$Step[i], unit = i, label = i, channel = ch1, t = spikes, stringsAsFactors = FALSE)
                 } else {
-                  data.frame(unit = i, label = i, channel = ch1, t = NA_real_, stringsAsFactors = FALSE)
+                  data.frame(runuid=md$RunUID[i], step=md$Step[i], unit = i, label = i, channel = ch1, t = NA_real_, stringsAsFactors = FALSE)
                 })
               }
               if (length(missing_in)) {
@@ -108,9 +125,9 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                 spikes <- extract_spike_times(X@Data[[i]][[ch]])
                 if (!is.null(tlim)) spikes <- spikes[spikes >= tlim[1] & spikes <= tlim[2]]
                 df <- rbind(df, if (length(spikes)) {
-                  data.frame(unit = ch, label = ch, channel = ch, t = spikes, stringsAsFactors = FALSE)
+                  data.frame(runuid=md$RunUID[i], step=md$Step[i], unit = ch, label = ch, channel = ch, t = spikes, stringsAsFactors = FALSE)
                 } else {
-                  data.frame(unit = ch, label = ch, channel = ch, t = NA_real_, stringsAsFactors = FALSE)
+                  data.frame(runuid=md$RunUID[i], step=md$Step[i], unit = ch, label = ch, channel = ch, t = NA_real_, stringsAsFactors = FALSE)
                 })
               }
             }
@@ -139,9 +156,18 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
             }
 
             # Map rows to integer y positions
-            order_keys <- unique(df$unit)
+            ## --- Map rows to integer y positions, with Step-order in Case A ----
+            if (caseA) {
+              rows_use <- unique(df$unit)
+              step_by_row <- md$Step[rows_use]
+              order_keys  <- rows_use[order(step_by_row, decreasing = T)]
+            } else {
+              order_keys <- unique(df$unit)
+            }
+
             y_map <- setNames(seq_along(order_keys), order_keys)
-            df$y <- unname(y_map[as.character(df$unit)])
+            df$y  <- unname(y_map[as.character(df$unit)])
+
 
             # x-limits
             if (is.null(tlim)) {
@@ -151,12 +177,49 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
               xlim_use <- tlim
             }
 
+            # ---- Optional background tiles ---------------------------------------------
+            bg_df <- NULL
+
+            if (!is.null(background)) {
+              # join the requested metadata column onto df by runuid
+              bg_meta <- md[, c("RunUID", background), drop = FALSE]
+              names(bg_meta)[2] <- "bg_value"
+
+              df <- merge(df, bg_meta,
+                          by.x  = "runuid",
+                          by.y  = "RunUID",
+                          all.x = TRUE,
+                          sort  = FALSE)
+
+              # one row per y for the tile layer
+              bg_df <- unique(df[, c("y", "bg_value")])
+              bg_df$x      <- mean(xlim_use)
+              bg_df$width  <- diff(xlim_use)
+              bg_df$height <- 1
+            }
+
             # Blank scaffold so rows without spikes still reserve space
             blank_df <- data.frame(t = xlim_use[1], y = seq_along(order_keys))
 
             # ---- Plot
             p_raster <- ggplot(df, aes(x = t)) +
-              geom_blank(data = blank_df, aes(x = t, y = y)) +
+              geom_blank(data = blank_df, aes(x = t, y = y))
+
+            # optional background tiles
+            if (!is.null(bg_df)) {
+              p_raster <- p_raster +
+                geom_tile(
+                  data = bg_df,
+                  aes(x = x, y = y, alpha = bg_value),
+                  fill        = background_fill,
+                  width       = bg_df$width[1],
+                  height      = bg_df$height[1],
+                  inherit.aes = FALSE
+                )
+            }
+
+            # spike ticks as before
+            p_raster <- p_raster +
               geom_linerange(
                 aes(ymin = y - tick_height/2, ymax = y + tick_height/2),
                 linewidth = line_size, na.rm = TRUE
@@ -181,6 +244,7 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                 panel.grid.minor   = element_blank()
               )
 
+
             p_out <- p_raster
 
             # ---- Optional stimulus panel via cowplot
@@ -201,7 +265,5 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                 }
               }
             }
-
-            attr(p_out, "raster_data") <- df
             p_out
           })
