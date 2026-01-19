@@ -19,8 +19,7 @@
 #' @param background NULL (default) or the name of a Metadata column.
 #'   If non-NULL, a background tile is drawn for each raster row, with
 #'   `alpha` mapped to that column.
-#' @param background_fill
-#'   (RecordingID/rownames) or channel names, depending on layout.
+#' @param background_fill The fill colour for the background tiles
 #' @return A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
 #'   is attached as \code{attr(., "raster_data")}.
 #'
@@ -50,6 +49,7 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                    stimulus_height = 0.6,
                    row_labels      = NULL,
                    background      = NULL,
+                   background_range= NULL,
                    background_fill = "black") {
 
             md  <- Metadata(X)
@@ -193,8 +193,8 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
 
               # one row per y for the tile layer
               bg_df <- unique(df[, c("y", "bg_value")])
-              bg_df$x      <- mean(xlim_use)
-              bg_df$width  <- diff(xlim_use)
+              bg_df$x      <- mean(background_range)
+              bg_df$width  <- diff(background_range)
               bg_df$height <- 1
             }
 

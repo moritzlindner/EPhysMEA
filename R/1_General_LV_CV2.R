@@ -91,7 +91,7 @@ NULL
 #'   one per adjacent ISI pair (\code{length(times) - 2}). If fewer than 3 spikes,
 #'   returns \code{numeric(0)}. Non-finite values arising from 0/0 are returned as \code{NA}.
 #' @export
-spike_irreg_lv_shinomoto <- function(times) {
+spike_irreg_lv_shinomoto_local <- function(times) {
   isi <- diff(times)
   if (length(isi) < 2L) return(numeric(0))
   r <- isi[-length(isi)]
@@ -108,20 +108,13 @@ spike_irreg_lv_shinomoto <- function(times) {
 #'   \code{numeric(0)}. If the mean is \code{NA}, returns \code{1}.
 #' @export
 spike_irreg_lv_shinomoto <- function(times) {
-  # Ensure numeric and strictly increasing times
   times <- as.numeric(times)
   if (!length(times)) return(numeric(0))
   if (is.unsorted(times)) times <- sort(times)
 
-  isi <- diff(times)
-  if (length(isi) < 2L) return(numeric(0))  # need at least 2 ISIs (=> 3 spikes)
-
-  num <- (isi[-1L] - isi[-length(isi)])^2
-  den <- (isi[-1L] + isi[-length(isi)])^2
-
-  lv_vec <- 3 * num / den
-  m <- mean(lv_vec)
-
+  lv_vec <- spike_irreg_lv_shinomoto_local(times)
+  if (!length(lv_vec)) return(numeric(0))
+  m <- mean(lv_vec, na.rm = TRUE)
   if (is.na(m)) 1 else m
 }
 #' @rdname LV_CV2

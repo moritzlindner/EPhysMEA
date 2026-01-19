@@ -6,9 +6,10 @@
 \alias{cv2}
 \alias{spike_irreg_cv2_local}
 \alias{segment_variability_by_breaks}
+\alias{spike_irreg_lv_shinomoto_local}
 \title{Spike‐train irregularity metrics: Shinomoto LV, CV2, and segment summaries}
 \usage{
-spike_irreg_lv_shinomoto(times)
+spike_irreg_lv_shinomoto_local(times)
 
 spike_irreg_lv_shinomoto(times)
 

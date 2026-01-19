@@ -25,7 +25,7 @@ ggEventRaster(X, ...)
 If non-NULL, a background tile is drawn for each raster row, with
 `alpha` mapped to that column.}
 
-\item{background_fill}{(RecordingID/rownames) or channel names, depending on layout.}
+\item{background_fill}{The fill colour for the background tiles}
 }
 \value{
 A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
