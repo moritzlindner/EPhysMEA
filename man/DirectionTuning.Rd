@@ -69,7 +69,7 @@ A named list with:
         \code{Run}, \code{Channel}, \code{direction_deg}, \code{Response_Amplitude},
         \code{start}, \code{end}.}
   \item{\code{metrics}}{data.frame with columns
-        \code{Run}, \code{Channel}, \code{dsi}, \code{preferred_direction}.}
+        \code{Run}, \code{Channel}, \code{dsi}, \code{osi}, \code{s_pow}, \code{preferred_direction}.}
 }
 }
 \description{
@@ -78,11 +78,15 @@ For each run (row of \code{Metadata}) and each channel, this method:
   \item computes the mean response per direction window via
         \code{\link{direction_response_amplitude}} (one value per row of \code{windows_df});
   \item summarizes direction tuning with
-        \code{\link{direction_selectivity_index}} (gDSI; normalized vector sum) and
-        \code{\link{direction_preferred_direction}} (preferred direction in degrees).
+        \code{\link{direction_selectivity_index}} (gDSI; normalized vector sum),
+        \code{\link{direction_orientation_selectivity_index}} (gOSI; doubled-angle normalized vector sum),
+        \code{s_pow} (power-based combination mapped to [0,1]),
+        and \code{\link{direction_preferred_direction}} (preferred direction in degrees).
 }
 It returns two tidy data.frames (analogous to \code{Recfield}): a long-form stack of
-per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics. Channels without enough events/spikes to reach a resolution for DSI of at least 0.2 are ignored and results set to NA.
+per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
+Channels with fewer than 10 total spikes across all direction windows are retained
+but their metrics are set to \code{NA}.
 }
 \details{
 \itemize{
@@ -93,6 +97,9 @@ per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
         and \code{direction_deg}. Times may be numeric or \pkg{units} convertible to seconds.
         If \code{check_equal_durations=TRUE}, all window durations must be equal within \code{tol}.
   \item \strong{Counting convention:} spikes are counted in half-open intervals \code{[start, end)}.
+  \item \strong{s_pow:} computed as
+        \deqn{s\_{pow}=\sqrt{\mathrm{gDSI}^2+\mathrm{gOSI}^2}/\sqrt{2}}
+        which maps to \eqn{[0,1]} when gDSI and gOSI are in \eqn{[0,1]}.
 }
 }
 \examples{
@@ -106,6 +113,7 @@ head(res$metrics)
 \seealso{
 \code{\link{direction_response_amplitude}},
   \code{\link{direction_selectivity_index}},
+  \code{\link{direction_orientation_selectivity_index}},
   \code{\link{direction_preferred_direction}},
   \code{\link{Recfield}}
 }

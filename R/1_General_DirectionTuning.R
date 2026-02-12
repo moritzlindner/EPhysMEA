@@ -6,11 +6,15 @@
 #'   \item computes the mean response per direction window via
 #'         \code{\link{direction_response_amplitude}} (one value per row of \code{windows_df});
 #'   \item summarizes direction tuning with
-#'         \code{\link{direction_selectivity_index}} (gDSI; normalized vector sum) and
-#'         \code{\link{direction_preferred_direction}} (preferred direction in degrees).
+#'         \code{\link{direction_selectivity_index}} (gDSI; normalized vector sum),
+#'         \code{\link{direction_orientation_selectivity_index}} (gOSI; doubled-angle normalized vector sum),
+#'         \code{s_pow} (power-based combination mapped to [0,1]),
+#'         and \code{\link{direction_preferred_direction}} (preferred direction in degrees).
 #' }
 #' It returns two tidy data.frames (analogous to \code{Recfield}): a long-form stack of
-#' per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics. Channels without enough events/spikes to reach a resolution for DSI of at least 0.2 are ignored and results set to NA.
+#' per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
+#' Channels with fewer than 10 total spikes across all direction windows are retained
+#' but their metrics are set to \code{NA}.
 #'
 #' @details
 #' \itemize{
@@ -21,6 +25,9 @@
 #'         and \code{direction_deg}. Times may be numeric or \pkg{units} convertible to seconds.
 #'         If \code{check_equal_durations=TRUE}, all window durations must be equal within \code{tol}.
 #'   \item \strong{Counting convention:} spikes are counted in half-open intervals \code{[start, end)}.
+#'   \item \strong{s_pow:} computed as
+#'         \deqn{s\_{pow}=\sqrt{\mathrm{gDSI}^2+\mathrm{gOSI}^2}/\sqrt{2}}
+#'         which maps to \eqn{[0,1]} when gDSI and gOSI are in \eqn{[0,1]}.
 #' }
 #'
 #' @param X      An \code{EPhysEvents} X.
@@ -38,11 +45,12 @@
 #'         \code{Run}, \code{Channel}, \code{direction_deg}, \code{Response_Amplitude},
 #'         \code{start}, \code{end}.}
 #'   \item{\code{metrics}}{data.frame with columns
-#'         \code{Run}, \code{Channel}, \code{dsi}, \code{preferred_direction}.}
+#'         \code{Run}, \code{Channel}, \code{dsi}, \code{osi}, \code{s_pow}, \code{preferred_direction}.}
 #' }
 #'
 #' @seealso \code{\link{direction_response_amplitude}},
 #'   \code{\link{direction_selectivity_index}},
+#'   \code{\link{direction_orientation_selectivity_index}},
 #'   \code{\link{direction_preferred_direction}},
 #'   \code{\link{Recfield}}
 #'
@@ -94,6 +102,7 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
 
             # --- per-(run×channel) worker applied by lapply(EPhysEvents, ...) ---
             single_worker <- function(spikes, windows_df, ReturnMap) {
+
               # responses per window (half-open [start, end))
               ra <- direction_response_amplitude(spikes, windows_df)
 
@@ -106,22 +115,41 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
                 check.names = FALSE
               )
 
-              # metrics from the map
-              if (sum(map_df$Response_Amplitude*(map_df$end-windows_df$start))>=10){ # require a minimum total of 10 spikes within the windows yielding a resolution of 0.2
+              # require a minimum total of 10 spikes within the windows (≈ 0.2 resolution)
+              dur <- to_num(windows_df$end) - to_num(windows_df$start)
+              total_spikes <- sum(pmax(0, as.numeric(ra)) * dur)
+
+              if (is.finite(total_spikes) && total_spikes >= 10) {
+
                 dsi <- direction_selectivity_index(map_df,
                                                    resp  = "Response_Amplitude",
                                                    angle = "direction_deg")
+
+                osi <- direction_orientation_selectivity_index(map_df,
+                                                               resp  = "Response_Amplitude",
+                                                               angle = "direction_deg")
+
                 pd  <- direction_preferred_direction(map_df,
                                                      resp  = "Response_Amplitude",
                                                      angle = "direction_deg")
-              } else {
-                dsi <- NA
-                pd <- NA
-              }
 
+                Spow <- if (is.finite(dsi) && is.finite(osi)) {
+                  sqrt(dsi*dsi + osi*osi) / sqrt(2)  # mapped to [0,1]
+                } else {
+                  NA_real_
+                }
+
+              } else {
+                dsi  <- NA_real_
+                osi  <- NA_real_
+                Spow <- NA_real_
+                pd   <- NA_real_
+              }
 
               met_df <- data.frame(
                 dsi                 = as.numeric(dsi),
+                osi                 = as.numeric(osi),
+                s_pow               = as.numeric(Spow),
                 preferred_direction = as.numeric(pd),
                 check.names = FALSE
               )
