@@ -4,12 +4,13 @@
 #' For each run (row of \code{Metadata}) and each channel, this method:
 #' \enumerate{
 #'   \item computes the mean response per direction window via
-#'         \code{\link{direction_response_amplitude}} (one value per row of \code{windows_df});
+#'         \code{\link{motion_direction_amplitude}} (one value per row of \code{windows_df});
 #'   \item summarizes direction tuning with
-#'         \code{\link{direction_selectivity_index}} (gDSI; normalized vector sum),
-#'         \code{\link{direction_orientation_selectivity_index}} (gOSI; doubled-angle normalized vector sum),
-#'         \code{s_pow} (power-based combination mapped to [0,1]),
-#'         and \code{\link{direction_preferred_direction}} (preferred direction in degrees).
+#'         \code{\link{motion_dsi}} (gDSI; normalized vector sum),
+#'         \code{\link{motion_osi}} (gOSI; doubled-angle normalized vector sum),
+#'         \code{s_pow} (power-based combination of the above mapped to [0,1]),
+#'         \code{\link{motion_tuning_area_score}} (Area of the normalized motion poligon),
+#'         and \code{\link{motion_preferred_direction}} (preferred direction in degrees).
 #' }
 #' It returns two tidy data.frames (analogous to \code{Recfield}): a long-form stack of
 #' per-direction responses (\code{maps}) and a per-(Run, Channel) table of metrics.
@@ -25,13 +26,23 @@
 #'         and \code{direction_deg}. Times may be numeric or \pkg{units} convertible to seconds.
 #'         If \code{check_equal_durations=TRUE}, all window durations must be equal within \code{tol}.
 #'   \item \strong{Counting convention:} spikes are counted in half-open intervals \code{[start, end)}.
-#'   \item \strong{s_pow:} computed as
+#'   \item \strong{Metrics:} per-direction response amplitudes are summarized with
+#'         \code{\link{motion_dsi}} (gDSI; normalized vector sum),
+#'         \code{\link{motion_osi}} (gOSI; doubled-angle normalized vector sum),
+#'         \code{\link{motion_preferred_direction}} (preferred direction, degrees),
+#'         and \code{\link{motion_tuning_area_score}} (area-based tuning score; see below).
+#'   \item \strong{s\_pow (combined selectivity):} computed as
 #'         \deqn{s\_{pow}=\sqrt{\mathrm{gDSI}^2+\mathrm{gOSI}^2}/\sqrt{2}}
 #'         which maps to \eqn{[0,1]} when gDSI and gOSI are in \eqn{[0,1]}.
+#'   \item \strong{Area-based motion tuning score:} \code{\link{motion_tuning_area_score}}
+#'         treats the per-direction responses as radii in polar coordinates, constructs the
+#'         corresponding polygon, and returns \eqn{1 - A/A_{\max}}, where \eqn{A} is the polygon
+#'         area after max-normalizing responses to 1 and \eqn{A_{\max}} is the area obtained for
+#'         the same sampled angles when all radii equal 1. The score is in \eqn{[0,1]}.
 #' }
 #'
 #' @param X      An \code{EPhysEvents} X.
-#' @inheritParams direction_response_amplitude
+#' @inheritParams motion_direction_amplitude
 #' @param check_equal_durations Logical; if \code{TRUE} (default) enforce identical window
 #'                    durations across rows of \code{windows_df} within \code{tol}.
 #' @param tol         Numeric tolerance for duration equality (seconds). Default \code{1e-9}.
@@ -45,13 +56,13 @@
 #'         \code{Run}, \code{Channel}, \code{direction_deg}, \code{Response_Amplitude},
 #'         \code{start}, \code{end}.}
 #'   \item{\code{metrics}}{data.frame with columns
-#'         \code{Run}, \code{Channel}, \code{dsi}, \code{osi}, \code{s_pow}, \code{preferred_direction}.}
+#'         \code{Run}, \code{Channel}, \code{dsi}, \code{osi}, \code{s_pow}, \code{ta}, \code{preferred_direction}.}
 #' }
 #'
-#' @seealso \code{\link{direction_response_amplitude}},
-#'   \code{\link{direction_selectivity_index}},
-#'   \code{\link{direction_orientation_selectivity_index}},
-#'   \code{\link{direction_preferred_direction}},
+#' @seealso \code{\link{motion_direction_amplitude}},
+#'   \code{\link{motion_dsi}},
+#'   \code{\link{motion_osi}},
+#'   \code{\link{motion_preferred_direction}},
 #'   \code{\link{Recfield}}
 #'
 #' @examples
@@ -104,7 +115,7 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
             single_worker <- function(spikes, windows_df, ReturnMap) {
 
               # responses per window (half-open [start, end))
-              ra <- direction_response_amplitude(spikes, windows_df)
+              ra <- motion_direction_amplitude(spikes, windows_df)
 
               # long-form per-direction responses
               map_df <- data.frame(
@@ -121,17 +132,10 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
 
               if (is.finite(total_spikes) && total_spikes >= 10) {
 
-                dsi <- direction_selectivity_index(map_df,
-                                                   resp  = "Response_Amplitude",
-                                                   angle = "direction_deg")
-
-                osi <- direction_orientation_selectivity_index(map_df,
-                                                               resp  = "Response_Amplitude",
-                                                               angle = "direction_deg")
-
-                pd  <- direction_preferred_direction(map_df,
-                                                     resp  = "Response_Amplitude",
-                                                     angle = "direction_deg")
+                dsi <- motion_dsi(map_df, resp  = "Response_Amplitude", angle = "direction_deg")
+                osi <- motion_osi(map_df, resp  = "Response_Amplitude", angle = "direction_deg")
+                ta <- motion_tuning_area_score(map_df, resp  = "Response_Amplitude", angle = "direction_deg")
+                pd  <- motion_preferred_direction(map_df, resp  = "Response_Amplitude", angle = "direction_deg")
 
                 Spow <- if (is.finite(dsi) && is.finite(osi)) {
                   sqrt(dsi*dsi + osi*osi) / sqrt(2)  # mapped to [0,1]
@@ -143,6 +147,7 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
                 dsi  <- NA_real_
                 osi  <- NA_real_
                 Spow <- NA_real_
+                ta  <- NA_real_
                 pd   <- NA_real_
               }
 
@@ -150,6 +155,7 @@ setMethod("DirectionTuning", signature(X = "EPhysEvents"),
                 dsi                 = as.numeric(dsi),
                 osi                 = as.numeric(osi),
                 s_pow               = as.numeric(Spow),
+                ta               = as.numeric(ta),
                 preferred_direction = as.numeric(pd),
                 check.names = FALSE
               )
