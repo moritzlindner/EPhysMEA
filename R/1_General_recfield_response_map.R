@@ -344,18 +344,25 @@ df <- data.frame(
     prof_s <- tapply(Vb, bin_s, function(z) mean(z, na.rm = TRUE))
     r50_sec[s+1] <- r50_from_profile(r_cent, as.numeric(prof_s))
   }
-  ix <- function(i, n) ((i - 1L) %% n) + 1L
-  i_max <- which.max(r50_sec)
+  pairs <- 1:6
+  diam <- vapply(pairs, function(s) {
+    a <- r50_sec[s]
+    b <- r50_sec[s + 6]
+    if (is.finite(a) && is.finite(b)) (a + b) / 2 else NA_real_
+  }, numeric(1))
 
-  i_maj2   <- ix(i_max + nsec/2L, nsec)     # opposite of max (θ + 180°)
-  i_orth1  <- ix(i_max + nsec/4L, nsec)     # θ + 90°
-  i_orth2  <- ix(i_max - nsec/4L, nsec)     # θ - 90° (≡ θ + 270°)
+  if (all(!is.finite(diam))) {
+    symmetry_ratio <- NA_real_
+  } else {
+    s_maj <- which.max(diam)              # major axis (paired)
+    s_min <- ((s_maj + 3 - 1) %% 6) + 1   # orthogonal axis (paired)
 
-  major <- mean(c(r50_sec[i_max],  r50_sec[i_maj2]),  na.rm = TRUE)  # major diameter
-  minor <- mean(c(r50_sec[i_orth1], r50_sec[i_orth2]), na.rm = TRUE) # orthogonal diameter
+    major <- diam[s_maj]
+    minor <- diam[s_min]
 
-  symmetry_ratio <- if (is.finite(major) && is.finite(minor) && minor > 0)
-    major / minor else NA_real_
+    symmetry_ratio <- if (is.finite(major) && is.finite(minor) && major > 0 && minor > 0)
+      major / minor else NA_real_
+  }
 
   # Outer ring: use outer 30% of available radii as baseline region
   outer_sel <- R >= (max(R[is.finite(V)], na.rm=TRUE) * 0.7)
