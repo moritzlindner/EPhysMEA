@@ -7,7 +7,7 @@
 ggEventRaster(X, ...)
 }
 \arguments{
-\item{object}{An \code{EPhysEvents} object in a valid configuration (see above).}
+\item{X}{An \code{EPhysEvents} object in a valid configuration (see above).}
 
 \item{tlim}{Optional numeric length-2 \code{c(tmin, tmax)} time window (s).}
 
@@ -19,34 +19,53 @@ ggEventRaster(X, ...)
 
 \item{stimulus_height}{Relative height of the stimulus panel in \code{cowplot::plot_grid}. Default 0.6.}
 
-\item{row_labels}{Optional character vector of row labels; otherwise derived from Metadata}
+\item{row_labels}{Optional character vector of row labels for Case A; if provided,
+this overrides \code{label_col}.}
 
-\item{background}{NULL (default) or the name of a Metadata column.
-If non-NULL, a background tile is drawn for each raster row, with
-`alpha` mapped to that column.}
+\item{label_col}{Optional character scalar naming a Metadata column to use as
+row labels in Case A when \code{row_labels} is \code{NULL}. Ignored in Case B.}
 
-\item{background_fill}{The fill colour for the background tiles}
+\item{step_gap}{Non-negative numeric. If \code{> 0} (Case A only), inserts a
+vertical gap of this size (in y-units) between successive label groups and
+switches the y-axis to group-midpoint ticks (block labels).}
+
+\item{step_order_decreasing}{Logical. If TRUE (Case A only), reverses the order
+of label groups. Ordering is numeric if labels parse as numeric, otherwise
+lexicographic.}
+
+\item{background}{NULL (default) or the name of a Metadata column. If non-NULL,
+a background tile is drawn for each raster row, with \code{alpha} mapped to that column.}
+
+\item{background_range}{Optional numeric length-2 range used to draw the background tile
+along x (typically the stimulus-encoding rectangle window).}
+
+\item{background_fill}{The fill colour for the background tiles.}
 }
 \value{
 A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
-  is attached as \code{attr(., "raster_data")}.
+  are attached as \code{attr(., "raster_data")}.
 }
 \description{
-Expects \code{object} to be in one of two valid formats:
+Expects \code{X} to be in one of two valid formats:
 \enumerate{
-  \item \code{length(Channels(object)) == 1}: plots one channel across all Metadata rows (rows = traces).
-  \item \code{nrow(Metadata(object)) == 1}: plots all channels within the single Metadata row (rows = channels).
+  \item \code{length(Channels(X)) == 1}: plots one channel across all Metadata rows (rows = traces).
+  \item \code{nrow(Metadata(X)) == 1}: plots all channels within the single Metadata row (rows = channels).
 }
 Spikes are drawn as vertical ticks via \code{geom_linerange}. If a stimulus is
 present and \code{show_stimulus = TRUE}, the output of \code{ggStimulusPlot()}
 is stacked underneath via \pkg{cowplot}.
 }
+\details{
+In Case A (one channel across Metadata rows), rows can be labeled/grouped by a
+Metadata column via \code{label_col}. If \code{step_gap > 0}, the raster is
+grouped by the chosen row labels, vertical gaps are inserted between groups,
+and the y-axis uses group-midpoint ticks (block labels).
+}
 \examples{
 \dontrun{
-# Case 1: object has exactly one channel overall
-ggEventRaster(ephys, tlim = c(-0.5, 1))
-
-# Case 2: object has exactly one metadata row (one trace)
-ggEventRaster(ephys_one_row, tlim = c(0, 2), show_stimulus = FALSE)
+ggEventRaster(ephys, tlim = c(-0.5, 1), show_stimulus = FALSE)
+ggEventRaster(ephys, tlim = c(0, 2), label_col = "Intensity", step_gap = 1,
+             step_order_decreasing = TRUE, show_stimulus = FALSE)
 }
+
 }
