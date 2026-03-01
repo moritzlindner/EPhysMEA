@@ -2,39 +2,50 @@
 #'
 #' Expects \code{X} to be in one of two valid formats:
 #' \enumerate{
-#'   \item \code{length(Channels(X)) == 1}: plots one channel across all Metadata rows (rows = traces).
-#'   \item \code{nrow(Metadata(X)) == 1}: plots all channels within the single Metadata row (rows = channels).
+#'   \item \code{length(\link[EPhysData]{Channels}(X)) == 1}:
+#'         plots one channel across all \link[EPhysData]{Metadata} rows (rows = traces).
+#'   \item \code{nrow(\link[EPhysData]{Metadata}(X)) == 1}:
+#'         plots all \link[EPhysData]{Channels} within the single metadata row (rows = channels).
 #' }
-#' Spikes are drawn as vertical ticks via \code{geom_linerange}. If a stimulus is
-#' present and \code{show_stimulus = TRUE}, the output of \code{ggStimulusPlot()}
-#' is stacked underneath via \pkg{cowplot}.
 #'
-#' In Case A (one channel across Metadata rows), rows can be labeled/grouped by a
-#' Metadata column via \code{label_col}. If \code{step_gap > 0}, the raster is
+#' Spikes are drawn as vertical ticks via \code{\link[ggplot2]{geom_linerange}}.
+#' If a stimulus is present and \code{show_stimulus = TRUE}, the output of
+#' \code{\link{ggStimulusPlot}} is stacked underneath via
+#' \code{\link[cowplot]{plot_grid}} (\pkg{cowplot}).
+#'
+#' In Case A (one channel across metadata rows), rows can be labeled/grouped by a
+#' metadata column via \code{label_col}. If \code{step_gap > 0}, the raster is
 #' grouped by the chosen row labels, vertical gaps are inserted between groups,
 #' and the y-axis uses group-midpoint ticks (block labels).
 #'
-#' @param X An \code{EPhysEvents} object in a valid configuration (see above).
-#' @param tlim Optional numeric length-2 \code{c(tmin, tmax)} time window (s).
+#' @param X An \code{\link[EPhysData]{EPhysEvents-class}} object in a valid configuration (see above).
+#' @param tlim Optional numeric length-2 \code{c(tmin, tmax)} time window (s) passed to
+#'   \code{\link[ggplot2]{coord_cartesian}}.
 #' @param tick_height Numeric height of each spike tick in y-units (row spacing). Default 0.8.
-#' @param line_size Line width for \code{geom_linerange}. Default 0.3.
-#' @param show_stimulus Logical; if TRUE, try to compose a stimulus panel underneath. Default TRUE.
-#' @param stimulus_height Relative height of the stimulus panel in \code{cowplot::plot_grid}. Default 0.6.
+#' @param line_size Line width for \code{\link[ggplot2]{geom_linerange}}. Default 0.3.
+#' @param alpha_raster Numeric in \eqn{[0,1]}. Opacity of spike ticks in
+#'   \code{\link[ggplot2]{geom_linerange}}. Default 1.
+#' @param show_stimulus Logical; if TRUE, compose a stimulus panel underneath using
+#'   \code{\link{ggStimulusPlot}} and \code{\link[cowplot]{plot_grid}}. Default TRUE.
+#' @param stimulus_height Relative height of the stimulus panel in
+#'   \code{\link[cowplot]{plot_grid}}. Default 0.6.
 #' @param row_labels Optional character vector of row labels for Case A; if provided,
 #'   this overrides \code{label_col}.
-#' @param label_col Optional character scalar naming a Metadata column to use as
+#' @param label_col Optional character scalar naming a \code{\link[EPhysData]{Metadata}} column to use as
 #'   row labels in Case A when \code{row_labels} is \code{NULL}. Ignored in Case B.
 #' @param step_gap Non-negative numeric. If \code{> 0} (Case A only), inserts a
 #'   vertical gap of this size (in y-units) between successive label groups and
-#'   switches the y-axis to group-midpoint ticks (block labels).
+#'   switches the y-axis to group-midpoint ticks (block labels) via
+#'   \code{\link[ggplot2]{scale_y_continuous}}.
 #' @param step_order_decreasing Logical. If TRUE (Case A only), reverses the order
 #'   of label groups. Ordering is numeric if labels parse as numeric, otherwise
 #'   lexicographic.
-#' @param background NULL (default) or the name of a Metadata column. If non-NULL,
-#'   a background tile is drawn for each raster row, with \code{alpha} mapped to that column.
+#' @param background NULL (default) or the name of a \code{\link[EPhysData]{Metadata}} column.
+#'   If non-NULL, a background tile is drawn for each raster row with
+#'   \code{\link[ggplot2]{geom_tile}}, and \code{alpha} mapped to that column.
 #' @param background_range Optional numeric length-2 range used to draw the background tile
 #'   along x (typically the stimulus-encoding rectangle window).
-#' @param background_fill The fill colour for the background tiles.
+#' @param background_fill The fill colour for the background tiles (used in \code{\link[ggplot2]{geom_tile}}).
 #'
 #' @return A \code{ggplot} object (or a \code{cowplot} composite). The tidy spike data
 #'   are attached as \code{attr(., "raster_data")}.
@@ -45,6 +56,12 @@
 #' ggEventRaster(ephys, tlim = c(0, 2), label_col = "Intensity", step_gap = 1,
 #'              step_order_decreasing = TRUE, show_stimulus = FALSE)
 #' }
+#'
+#' @seealso
+#' \code{\link[EPhysData]{Metadata}}, \code{\link[EPhysData]{Channels}},
+#' \code{\link{ggStimulusPlot}},
+#' \code{\link[ggplot2]{geom_linerange}}, \code{\link[ggplot2]{geom_tile}},
+#' \code{\link[cowplot]{plot_grid}}
 #'
 #' @importClassesFrom EPhysData EPhysEvents
 #' @importFrom EPhysData Metadata Channels
@@ -69,7 +86,8 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                    step_order_decreasing = FALSE,
                    background          = NULL,
                    background_range    = NULL,
-                   background_fill     = "black") {
+                   background_fill     = "black",
+                   alpha_raster        = 1) {
 
             stopifnot(is.numeric(step_gap), length(step_gap) == 1L, is.finite(step_gap), step_gap >= 0)
 
@@ -299,6 +317,7 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
             p_raster <- p_raster +
               geom_linerange(
                 aes(ymin = y - tick_height/2, ymax = y + tick_height/2),
+                alpha=alpha_raster,
                 linewidth = line_size, na.rm = TRUE
               ) +
               scale_y_continuous(
