@@ -66,7 +66,7 @@
 #' @importClassesFrom EPhysData EPhysEvents
 #' @importFrom EPhysData Metadata Channels
 #' @importFrom ggpubr theme_pubr
-#' @importFrom ggplot2 ggplot aes geom_blank geom_tile geom_linerange
+#' @importFrom ggplot2 ggplot aes geom_blank geom_tile geom_linerange guide_axis
 #'   scale_y_continuous expansion coord_cartesian labs theme element_blank
 #' @name ggEventRaster
 setGeneric("ggEventRaster", function(X, ...)
@@ -134,6 +134,7 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
             }
 
             df <- NULL
+            y_tick_breaks <- NULL
 
             # ---- Case A: one channel across all Metadata rows
             if (caseA) {
@@ -176,98 +177,24 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
             }
 
             # ---- Build row labels (Case A) / channel labels (Case B)
-            y_axis_title <- if (caseA) "Trace (Metadata row)" else "Channel"
+            # ---- Shared auto-layout (labels + y mapping), replaces lines 178–270 ----
+            lay <- .ephys_autolayout(
+              X,
+              row_labels = row_labels,
+              label_col = label_col,
+              step_gap = step_gap,
+              step_order_decreasing = step_order_decreasing
+            )
 
-            if (caseA) {
-              rows_use <- seq_len(n_rows)
+            df$label <- if (isTRUE(lay$caseA)) unname(lay$rowlabs[as.character(df$unit)]) else as.character(df$unit)
+            df$label[is.na(df$label) | !nzchar(df$label)] <- "NA"
 
-              if (!is.null(row_labels)) {
-                stopifnot(length(row_labels) == length(rows_use))
-                rowlabs <- setNames(as.character(row_labels), as.character(rows_use))
+            df$y <- unname(lay$y_map[as.character(df$unit)])
 
-              } else if (!is.null(label_col) && is.character(label_col) && length(label_col) == 1L &&
-                         !is.null(md) && label_col %in% names(md)) {
-
-                rowlabs <- setNames(as.character(md[[label_col]][rows_use]), as.character(rows_use))
-                if (step_gap > 0) y_axis_title <- label_col
-
-              } else {
-                if (!is.null(md)) {
-                  if (!is.null(rownames(md)) && length(rownames(md))) {
-                    rowlabs <- setNames(rownames(md)[rows_use], as.character(rows_use))
-                  } else if ("RecordingID" %in% names(md)) {
-                    rowlabs <- setNames(as.character(md$RecordingID[rows_use]), as.character(rows_use))
-                  } else {
-                    rowlabs <- setNames(paste0("row_", rows_use), as.character(rows_use))
-                  }
-                } else {
-                  rowlabs <- setNames(paste0("row_", rows_use), as.character(rows_use))
-                }
-              }
-
-              # attach label per spike row
-              df$label <- unname(rowlabs[as.character(df$unit)])
-              df$label[is.na(df$label) | !nzchar(df$label)] <- "NA"
-
-            } else {
-              rowlabs <- setNames(unique(df$unit), unique(df$unit)) # channel names as labels
-            }
-
-            # ---- Map rows to y positions (Case A: order/gap by label; Case B unchanged)
-            if (caseA) {
-              rows_use <- sort(unique(df$unit))
-              lab_by_row <- unname(rowlabs[as.character(rows_use)])
-              lab_by_row[is.na(lab_by_row) | !nzchar(lab_by_row)] <- "NA"
-
-              # label levels in desired order (numeric if possible)
-              lev <- unique(lab_by_row)
-              lev_num <- suppressWarnings(as.numeric(lev))
-              if (all(!is.na(lev_num))) {
-                lev <- lev[order(lev_num, decreasing = isTRUE(step_order_decreasing))]
-              } else {
-                lev <- lev[order(lev, decreasing = isTRUE(step_order_decreasing))]
-              }
-
-              lab_rank <- match(lab_by_row, lev)
-
-              step_key <- if (!is.null(md) && "Step" %in% names(md)) md$Step[rows_use] else rows_use
-              run_key  <- if (!is.null(md) && "RunUID" %in% names(md)) as.character(md$RunUID[rows_use]) else as.character(rows_use)
-
-              rows_ord <- rows_use[order(lab_rank, step_key, run_key, rows_use)]
-              lab_ord  <- unname(rowlabs[as.character(rows_ord)])
-              lab_ord[is.na(lab_ord) | !nzchar(lab_ord)] <- "NA"
-
-              grp_num <- match(lab_ord, lev)
-
-              y_pos <- seq_along(rows_ord)
-              if (step_gap > 0) y_pos <- y_pos + (grp_num - 1) * step_gap
-
-              y_map <- setNames(y_pos, as.character(rows_ord))
-              df$y  <- unname(y_map[as.character(df$unit)])
-
-              order_keys <- rows_ord
-
-              # y-scale: per-row labels if no gaps; block midpoints if gaps
-              if (step_gap > 0) {
-                y_for_rows <- unname(y_map[as.character(order_keys)])
-                grp_min <- tapply(y_for_rows, lab_ord, min)
-                grp_max <- tapply(y_for_rows, lab_ord, max)
-                y_breaks <- (grp_min + grp_max) / 2
-                y_breaks <- unname(y_breaks[lev])
-
-                y_labels <- lev
-              } else {
-                y_breaks <- unname(y_map[as.character(order_keys)])
-                y_labels <- unname(rowlabs[as.character(order_keys)])
-              }
-
-            } else {
-              order_keys <- unique(df$unit)
-              y_map <- setNames(seq_along(order_keys), order_keys)
-              df$y  <- unname(y_map[as.character(df$unit)])
-              y_breaks <- seq_along(order_keys)
-              y_labels <- unname(rowlabs)
-            }
+            y_axis_title <- lay$y_axis_title
+            y_breaks     <- lay$y_breaks
+            y_labels     <- lay$y_labels
+            y_tick_breaks <- lay$y_tick_breaks
 
             # ---- x-limits
             if (is.null(tlim)) {
@@ -323,7 +250,8 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
               scale_y_continuous(
                 breaks = y_breaks,
                 labels = y_labels,
-                expand = expansion(mult = c(0.02, 0.02))
+                expand = expansion(mult = c(0.02, 0.02)),
+                minor_breaks = y_tick_breaks
               ) +
               coord_cartesian(xlim = xlim_use) +
               labs(
@@ -335,15 +263,18 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                   "Raster: Single trace, per channel"
               ) +
               theme_pubr(base_size = 8) +
+              guides(y = guide_axis(minor.ticks = TRUE)) +
               theme(
-                panel.grid.major.y = element_blank(),
-                panel.grid.minor   = element_blank()
+                # panel.grid.major.y = element_blank(),
+                # panel.grid.minor   = element_blank(),
+                # remove gridlines at minor breaks if you don’t want them
+                panel.grid.minor.y = element_line(),
+                axis.ticks.y.left = element_blank(),
+                axis.minor.ticks.y.left = element_line(),
+                axis.minor.ticks.length = ggplot2::rel(2)
               )
 
             p_out <- p_raster
-
-            # attach tidy data
-            attr(p_out, "raster_data") <- df
 
             # ---- Optional stimulus panel via cowplot
             if (isTRUE(show_stimulus)) {
@@ -357,10 +288,8 @@ setMethod("ggEventRaster", signature(X = "EPhysEvents"),
                     p_raster, stim_plot, ncol = 1,
                     rel_heights = c(1, stimulus_height), align = "v", axis = "lr"
                   )
-                  attr(p_out, "raster_data") <- df
                 } else {
                   p_out <- p_raster
-                  attr(p_out, "raster_data") <- df
                 }
               }
             }

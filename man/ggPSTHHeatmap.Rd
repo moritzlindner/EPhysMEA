@@ -2,113 +2,114 @@
 % Please edit documentation in R/1_General_ggPSTHHeatmap.R
 \name{ggPSTHHeatmap}
 \alias{ggPSTHHeatmap}
-\alias{ggPSTHHeatmap,EPhysContinuous-method}
-\alias{ggPSTHHeatmapByRecording,EPhysContinuous-method}
-\title{ggPSTHHeatmap for EPhysContinuous with Stimulus Overlay (+ optional right-side dot strip)}
+\alias{ggPSTHHeatmap.primitive}
+\title{PSTH heatmaps for EPhysContinuous objects and pre-binned matrices}
 \usage{
-ggPSTHHeatmap(
-  X,
-  normalize = FALSE,
-  sort_by = NULL,
-  NoRowLabels = FALSE,
-  Legend = TRUE,
-  PlotTitle = "Average PSTH Heatmap",
-  trim = 0,
-  sample_channels = FALSE,
-  dot_position = 1,
-  dot_size = 1,
-  dot_color = "grey50",
-  dotbar_width = 2
-)
+ggPSTHHeatmap(X, ...)
 
-\S4method{ggPSTHHeatmap}{EPhysContinuous}(
-  X,
+ggPSTHHeatmap.primitive(
+  bin_mtx,
+  meta,
+  time_unit = NULL,
+  PlotTitle = NULL,
+  bin_dur,
+  xlim_use = NULL,
   normalize = FALSE,
-  sort_by = NULL,
+  value = "count",
   NoRowLabels = FALSE,
   Legend = TRUE,
-  PlotTitle = "Average PSTH Heatmap",
-  trim = 0,
-  sample_channels = FALSE,
-  dot_position = 1,
-  dot_size = 1,
-  dot_color = "grey50",
-  dotbar_width = 2
-)
-
-\S4method{ggPSTHHeatmapByRecording}{EPhysContinuous}(
-  X,
-  normalize = FALSE,
   sort_by = NULL,
-  NoRowLabels = FALSE,
-  Legend = TRUE,
-  PlotTitle = "Average PSTH per Recording",
-  trim = 0,
-  dot_position = NULL,
-  dot_size = 1,
-  dot_color = "grey50",
-  dotbar_width = 2
+  facet_row = NULL,
+  ...
 )
 }
 \arguments{
-\item{X}{An \code{EPhysEvents} or \code{EPhysContinuous} object.}
+\item{X}{An \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}}
+object in a valid configuration.}
 
-\item{normalize}{Logical; if \code{TRUE}, per-recording min–max normalization (unitless \code{1}).}
+\item{...}{Further arguments reserved for future use.}
 
-\item{sort_by}{Passed to \code{SortRun(X, sort_by)} to derive row order.}
+\item{bin_mtx}{For \code{ggPSTHHeatmap.primitive()} only: numeric matrix whose
+rows correspond to observations/units and whose columns correspond to time bins.}
 
-\item{NoRowLabels}{Logical; hide y-axis labels/ticks if \code{TRUE}.}
+\item{meta}{For \code{ggPSTHHeatmap.primitive()} only: \code{data.frame} with
+\code{nrow(meta) == nrow(bin_mtx)}. Used for ordering, row labeling and
+optional faceting.}
 
-\item{Legend}{Logical; hide heatmap legend if \code{FALSE}.}
+\item{time_unit}{For \code{ggPSTHHeatmap.primitive()} only: character scalar
+giving the x-axis time unit label.}
 
-\item{PlotTitle}{Title above the heatmap.}
+\item{PlotTitle}{Character scalar used as plot title.}
 
-\item{trim}{Numeric in [0, 0.5]; fraction of bins trimmed from each end before averaging.}
+\item{normalize}{Logical; if \code{TRUE}, min-max normalise each row over time
+to the interval \code{[0, 1]}.}
 
-\item{sample_channels}{FALSE (default) or numerif if only to plot \code{sample_channels} random samples.}
+\item{value}{One of \code{"freq"} or \code{"count"}.}
 
-\item{dot_position}{Either:
-\itemize{
-  \item \code{NULL}: no dotbar,
-  \item a single numeric: same object-position for all dots,
-  \item a numeric vector of length \code{length(Channels(object))}: per-channel object-positions,
-        assumed in the same order as \code{Channels(object)}; re-ordered if \code{sort_by} changes the order.
-}}
+\item{NoRowLabels}{Logical; hide y-axis labels and ticks.}
 
-\item{dot_size}{Numeric (scalar or vector length \code{length(Channels(object))}). If scalar,
-a fixed point size is used. If a vector, sizes are mapped with a compressed range
-so the maximum appears ~20\% smaller than ggplot2's default max.}
+\item{Legend}{Logical; show the heatmap legend.}
 
-\item{dot_color}{Character (scalar or vector length \code{length(Channels(object))}).
-Colors are taken as-is (no legend).}
+\item{sort_by}{For \code{ggPSTHHeatmap.primitive()} only: character vector of
+column names in \code{meta}. Rows are ordered by these variables, within each
+facet when \code{facet_row} is set. Row labels are formed by concatenating
+these variables with \dQuote{ · }.}
 
-\item{dotbar_width}{Numeric; right-side dotbar width weight relative to 100.
-The top/bottom rows use \code{rel_widths = c(100 - dotbar_width, dotbar_width)}.}
+\item{facet_row}{For \code{ggPSTHHeatmap.primitive()} only: \code{NULL} or
+character scalar naming a column in \code{meta}. If provided, the heatmap is
+faceted horizontally by this variable.}
 
-\item{NoRowLabels, Legend, PlotTitle, trim}{See channel-based variant.}
+\item{tlim}{Optional numeric length-2 vector \code{c(tmin, tmax)} specifying the
+time window, in the units returned by
+\code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.}
 
-\item{dot_position, dot_size, dot_color, dotbar_width}{See channel-based variant; all interpreted per recording.}
+\item{show_stimulus}{Logical; if \code{TRUE}, stack a stimulus panel underneath
+using \code{\link{ggStimulusPlot}} when stimulus information is available.}
+
+\item{stimulus_height}{Relative height of the stimulus panel in
+\code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}.}
+
+\item{row_labels, label_col, step_gap, step_order_decreasing}{Same meaning as in
+\code{\link{ggEventRaster}}.}
 }
 \value{
-A \pkg{cowplot} object.
-
-A \pkg{cowplot} object.
+A \code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object. For
+  \code{ggPSTHHeatmap()}, if \code{show_stimulus = TRUE} and a stimulus is
+  available, the result may be a \code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}
+  composite.
 }
 \description{
-Plots a heatmap of the trial-averaged PSTH from an \code{EPhysContinuous}
-object, and—if a \code{StimulusTrace} is present—a stimulus trace aligned in time.
-Optionally adds a right-side dot strip (one dot per channel) showing a
-per-channel position value.
-
-Heatmap with one row per \code{RecordingID}, using the single channel present
-in \code{X}. Trials are averaged via \code{AverageTrials()}, then plotted.
-Optionally normalizes per recording, sorts rows via \code{SortRun()}, and
-adds a right-side dot strip keyed per recording.
+\code{ggPSTHHeatmap()} draws PSTH-like heatmaps from an
+\code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object
+using the same auto-layout logic as \code{\link{ggEventRaster}}.
 }
-\section{Methods (by class)}{
-\itemize{
-\item \code{ggPSTHHeatmap(EPhysContinuous)}: Method for EPhysContinuous
+\details{
+Expects \code{X} to be in one of two valid formats:
+\enumerate{
+  \item \code{length(\link[EPhysData:Channels]{Channels}(X)) == 1}: one channel
+  across all \code{\link[EPhysData:Metadata]{Metadata}(X)} rows (rows = traces).
+  \item \code{nrow(\link[EPhysData:Metadata]{Metadata}(X)) == 1}: all
+  \code{\link[EPhysData:Channels]{Channels}(X)} within the single metadata row
+  (rows = channels).
+}
 
-\item \code{ggPSTHHeatmapByRecording(EPhysContinuous)}: ggPSTHHeatmapByRecording
+\code{X@Data} is assumed to be \code{[time × run × channel]}, as produced by
+\code{\link{Bin}} and optionally \code{\link{AverageTrials}}.
 
-}}
+\code{ggPSTHHeatmap.primitive()} exposes the same plotting backend for a
+pre-binned matrix plus matching metadata. In that interface, the x-axis time
+unit is supplied explicitly via \code{time_unit}, so no \code{X} object is
+required.
+
+\code{ggPSTHHeatmap.primitive()} is a low-level interface to the same plotting
+backend used by \code{\link{ggPSTHHeatmap}}. It works directly on a pre-binned
+matrix plus matching metadata and therefore does not require an
+\code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object.
+}
+\seealso{
+\code{\link{ggPSTHHeatmap.primitive}}, \code{\link{ggPSTHHeatmap.draw}},
+  \code{\link{ggEventRaster}}, \code{\link{ggStimulusPlot}},
+  \code{\link{Bin}}, \code{\link{AverageTrials}}
+
+\code{\link{ggPSTHHeatmap}}, \code{\link{ggPSTHHeatmap.draw}}
+}

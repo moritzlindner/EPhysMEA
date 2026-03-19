@@ -1,585 +1,441 @@
-
-
-# ---- Main plotting method (by channel; single recording) -----------------
-#' ggPSTHHeatmap for EPhysContinuous with Stimulus Overlay (+ optional right-side dot strip)
+#' PSTH heatmaps for EPhysContinuous objects and pre-binned matrices
 #'
-#' Plots a heatmap of the trial-averaged PSTH from an \code{EPhysContinuous}
-#' object, and—if a \code{StimulusTrace} is present—a stimulus trace aligned in time.
-#' Optionally adds a right-side dot strip (one dot per channel) showing a
-#' per-channel position value.
+#' \code{ggPSTHHeatmap()} draws PSTH-like heatmaps from an
+#' \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object
+#' using the same auto-layout logic as \code{\link{ggEventRaster}}.
 #'
-#' @inheritParams AddStimulus
-#' @param normalize  Logical; if \code{TRUE}, each channel’s PSTH is min–max normalized to [0,1].
-#' @param sort_by    Optional ordering for channels. One of:
-#'   \itemize{
-#'     \item \code{NULL} (no reordering; default),
-#'     \item a character vector of channel names (unspecified are appended in original order),
-#'     \item an integer vector of channel indices (unspecified are appended),
-#'     \item the string \code{"variance"} (order by descending PSTH variance).
-#'   }
-#' @param NoRowLabels Logical; hide y-axis labels/ticks if \code{TRUE}.
-#' @param Legend     Logical; hide heatmap legend if \code{FALSE}.
-#' @param PlotTitle  Title above the heatmap.
-#' @param trim       Numeric in [0, 0.5]; fraction of bins trimmed from each end before averaging.
-#' @param sample_channels FALSE (default) or numerif if only to plot \code{sample_channels} random samples.
-#' @param dot_position Either:
-#'   \itemize{
-#'     \item \code{NULL}: no dotbar,
-#'     \item a single numeric: same object-position for all dots,
-#'     \item a numeric vector of length \code{length(Channels(object))}: per-channel object-positions,
-#'           assumed in the same order as \code{Channels(object)}; re-ordered if \code{sort_by} changes the order.
-#'   }
-#' @param dot_size   Numeric (scalar or vector length \code{length(Channels(object))}). If scalar,
-#'                   a fixed point size is used. If a vector, sizes are mapped with a compressed range
-#'                   so the maximum appears ~20\% smaller than ggplot2's default max.
-#' @param dot_color  Character (scalar or vector length \code{length(Channels(object))}).
-#'                   Colors are taken as-is (no legend).
-#' @param dotbar_width Numeric; right-side dotbar width weight relative to 100.
-#'                     The top/bottom rows use \code{rel_widths = c(100 - dotbar_width, dotbar_width)}.
+#' Expects \code{X} to be in one of two valid formats:
+#' \enumerate{
+#'   \item \code{length(\link[EPhysData:Channels]{Channels}(X)) == 1}: one channel
+#'   across all \code{\link[EPhysData:Metadata]{Metadata}(X)} rows (rows = traces).
+#'   \item \code{nrow(\link[EPhysData:Metadata]{Metadata}(X)) == 1}: all
+#'   \code{\link[EPhysData:Channels]{Channels}(X)} within the single metadata row
+#'   (rows = channels).
+#' }
 #'
-#' @return A \pkg{cowplot} object.
-#' @import ggplot2
-#' @importFrom cowplot plot_grid theme_nothing
+#' \code{X@Data} is assumed to be \code{[time × run × channel]}, as produced by
+#' \code{\link{Bin}} and optionally \code{\link{AverageTrials}}.
+#'
+#' \code{ggPSTHHeatmap.primitive()} exposes the same plotting backend for a
+#' pre-binned matrix plus matching metadata. In that interface, the x-axis time
+#' unit is supplied explicitly via \code{time_unit}, so no \code{X} object is
+#' required.
+#'
+#' @param X An \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}}
+#'   object in a valid configuration.
+#' @param tlim Optional numeric length-2 vector \code{c(tmin, tmax)} specifying the
+#'   time window, in the units returned by
+#'   \code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.
+#' @param value One of \code{"freq"} or \code{"count"}.
+#' @param normalize Logical; if \code{TRUE}, min-max normalise each row over time
+#'   to the interval \code{[0, 1]}.
+#' @param show_stimulus Logical; if \code{TRUE}, stack a stimulus panel underneath
+#'   using \code{\link{ggStimulusPlot}} when stimulus information is available.
+#' @param stimulus_height Relative height of the stimulus panel in
+#'   \code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}.
+#' @param row_labels,label_col,step_gap,step_order_decreasing Same meaning as in
+#'   \code{\link{ggEventRaster}}.
+#' @param NoRowLabels Logical; hide y-axis labels and ticks.
+#' @param Legend Logical; show the heatmap legend.
+#' @param PlotTitle Character scalar used as plot title.
+#'
+#' @return A \code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object. For
+#'   \code{ggPSTHHeatmap()}, if \code{show_stimulus = TRUE} and a stimulus is
+#'   available, the result may be a \code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}
+#'   composite.
+#'
+#' @seealso \code{\link{ggPSTHHeatmap.primitive}}, \code{\link{ggPSTHHeatmap.draw}},
+#'   \code{\link{ggEventRaster}}, \code{\link{ggStimulusPlot}},
+#'   \code{\link{Bin}}, \code{\link{AverageTrials}}
+#'
 #' @importClassesFrom EPhysData EPhysContinuous
-#' @importFrom EPhysData Metadata Channels ChannelMetadata TimeTrace StimulusTrace Subset as.data.frame HasStimulus
-#' @name ggPSTHHeatmap
+#' @importFrom EPhysData Metadata Channels TimeTrace TimeUnits
+#' @importFrom ggplot2 ggplot aes geom_tile scale_y_continuous scale_y_discrete
+#'   scale_x_continuous scale_fill_viridis_c expansion coord_cartesian
+#'   labs theme element_blank margin facet_grid waiver
+#' @importFrom ggpubr theme_pubr
+#' @importFrom cowplot plot_grid
 #' @export
-setGeneric("ggPSTHHeatmap",
-           function(X,
-                    normalize    = FALSE,
-                    sort_by      = NULL,
-                    NoRowLabels  = FALSE,
-                    Legend       = TRUE,
-                    PlotTitle    = "Average PSTH Heatmap",
-                    trim         = 0,
-                    sample_channels = FALSE,
-                    dot_position = 1,
-                    dot_size     = 1,
-                    dot_color    = "grey50",
-                    dotbar_width = 2)
-           standardGeneric("ggPSTHHeatmap"))
+setGeneric("ggPSTHHeatmap", function(X, ...) standardGeneric("ggPSTHHeatmap"))
 
-#' @describeIn ggPSTHHeatmap Method for EPhysContinuous
 #' @export
-setMethod("ggPSTHHeatmap",
-          signature(X = "EPhysContinuous"),
+setMethod("ggPSTHHeatmap", signature(X = "EPhysContinuous"),
           function(X,
-                   normalize    = FALSE,
-                   sort_by      = NULL,
-                   NoRowLabels  = FALSE,
-                   Legend       = TRUE,
-                   PlotTitle    = "Average PSTH Heatmap",
-                   trim         = 0,
-                   sample_channels = FALSE,
-                   dot_position = 1,
-                   dot_size     = 1,
-                   dot_color    = "grey50",
-                   dotbar_width = 2) {
+                   tlim = NULL,
+                   value = c("freq", "count"),
+                   normalize = FALSE,
+                   show_stimulus = TRUE,
+                   stimulus_height = 0.6,
+                   row_labels = NULL,
+                   label_col = NULL,
+                   step_gap = 0,
+                   step_order_decreasing = FALSE,
+                   NoRowLabels = FALSE,
+                   Legend = TRUE,
+                   PlotTitle = "PSTH heatmap") {
 
-            if (is.numeric(sample_channels)) {
-              keep <- sample(Channels(X), size = sample_channels)
-              X <- Subset(X, Channels = keep)
+            value <- match.arg(value)
+
+            lay <- .ephys_autolayout(
+              X,
+              row_labels = row_labels,
+              label_col = label_col,
+              step_gap = step_gap,
+              step_order_decreasing = step_order_decreasing
+            )
+
+            arr <- X@Data
+            stopifnot(is.array(arr), length(dim(arr)) == 3L) # [time × run × channel]
+
+            tt <- to_num(TimeTrace(X))
+            if (!length(tt)) stop("TimeTrace(X) is empty.")
+            # bin duration from bin starts
+            bin_dur <- if (length(tt) >= 2L) stats::median(diff(tt), na.rm = TRUE) else 1
+            if (!is.finite(bin_dur) || bin_dur <= 0) bin_dur <- 1
+            time_centers <- tt + bin_dur / 2
+
+            # x-limits
+            xlim_use <- if (!is.null(tlim)) {
+              stopifnot(is.numeric(tlim), length(tlim) == 2L, all(is.finite(tlim)))
+              tlim
             } else {
-              if (!is.logical(sample_channels)){
-                stop("sample_channels must be false or numeric")
-              } else {
-                if(isTRUE(sample_channels)){
-                  stop("sample_channels must be false or numeric")
-                }
-              }
+              range(time_centers, finite = TRUE)
             }
 
-            rel_data_height<-rel_data_height(length(Channels(X)))
+            keep_t <- which(time_centers >= xlim_use[1] & time_centers <= xlim_use[2])
+            if (!length(keep_t)) stop("No time bins fall within tlim.")
 
-            ## ---- Prepare data (average trials) ----
-            if(length(unique(Metadata(X)$RecordingID))!=1){
-              stop("Data seem to contain Trials from multiple recordings")
-            }
-            avg_obj <- AverageTrials(X, trim = trim)
-            donorm<-as.logical(normalize)
-            if (isTRUE(donorm)) {
-              avg_obj <- Normalize(avg_obj)
-            }
-            df <- as.data.frame(avg_obj, ReturnAs = "freq")
-            keep_cols <- c("Channel", "Time", "Value")
-            if ("Stimulus" %in% names(df)) keep_cols <- c(keep_cols, "Stimulus")
-            df <- df[, keep_cols, drop = FALSE]
+            # ---- extract plotting matrix + unit ids ----
+            if (isTRUE(lay$caseA)) {
+              # one channel across Metadata rows / runs  -> mat: [unit(run) × time]
+              ch_idx <- 1L
+              tmp <- arr[keep_t, , ch_idx, drop = TRUE]  # [time × run] or vector
+              if (is.null(dim(tmp))) tmp <- matrix(tmp, nrow = length(keep_t), ncol = 1)
+              tmp <- as.matrix(tmp)
 
-            ## Base channel order = X order
-            ch_orig <- as.character(Channels(X))
-            df$Channel <- factor(as.character(df$Channel), levels = ch_orig)
+              mat <- t(tmp)  # [run × time]
 
-            ## ---- Sorting ----
-            if (!is.null(sort_by)) {
-              ord <- SortChannels(avg_obj, sort_by = sort_by )
-              df$Channel <- factor(as.character(df$Channel), levels = ord)
-            }
-            ch_final <- levels(df$Channel)  # final channel order
+              # IMPORTANT: keys must match lay$y_map names (row indices as characters)
+              unit_id <- as.character(seq_len(nrow(mat)))
 
-            time_u<-deparse_unit(df$Time)
-            val_u<-deparse_unit(df$Value)
-            df$Value<-drop_units(df$Value)
-            df$Time<-drop_units(df$Time)
-
-            ## ---- Heatmap ----
-
-
-            heat <- ggplot(df, aes(x = Time, y = Channel, fill = Value)) +
-              geom_tile() +
-              labs(x = paste0("Time (", time_u, ")"),
-                   y = "Channel",
-                   title = PlotTitle) +
-              theme_minimal() +
-              theme(
-                panel.grid  = element_blank(),
-                plot.margin = margin(0,0,0,0)
-              ) +
-              scale_y_discrete(expand = c(0,0))+
-              scale_x_continuous(expand = c(0,0))
-            if(isTRUE(normalize)){
-              heat <- heat +
-                scale_fill_viridis_c(name = "Normalized Rate")
             } else {
-              heat <- heat +
-              scale_fill_viridis_c(name = "Rate (Hz)")
-            }
-            if (isTRUE(NoRowLabels)) {
-              heat <- heat + theme(axis.text.y = element_blank(),
-                                   axis.ticks.y = element_blank())
-            }
-            if (!isTRUE(Legend)) {
-              heat <- heat + theme(legend.position = "none")
-            }
+              # one Metadata row, many channels -> mat: [channel × time]
+              run_idx <- 1L
+              tmp <- arr[keep_t, run_idx, , drop = TRUE] # [time × channel] or vector
+              if (is.null(dim(tmp))) tmp <- matrix(tmp, nrow = length(keep_t), ncol = 1)
+              tmp <- as.matrix(tmp)
 
-            ## ---- Stimulus (optional) ----
-            if (HasStimulus(X)) {
-              stim_plot <- ggStimulusPlot(X, NoRowLabels = NoRowLabels)
-              heat <- heat + theme(axis.text.x = element_blank(),
-                                   axis.ticks.x = element_blank())
+              mat <- t(tmp)  # [channel × time]
+
+              # IMPORTANT: keys must match lay$y_map names (channel names)
+              unit_id <- as.character(EPhysData::Channels(X))
+              rownames(mat) <- unit_id
             }
 
-            ## ---- Right-side dot strip (optional) ----
-            add_dotbar <-
-              any(length(dot_position) > 1, length(dot_size) > 1, length(dot_color) > 1)
-            if (add_dotbar) {
-              dot_info <- coerce_dot_inputs_channels(X, ch_final, dot_position, dot_size, dot_color)
-              dot_plot <- build_dotbar_plot(ch_final, dot_info, y_label = "Channel")
+            # ---- counts -> freq ----
+            if (value == "freq") mat <- mat / bin_dur
 
-              top_row <- cowplot::plot_grid(
-                heat, dot_plot,
-                ncol = 2, align = "h",
-                rel_widths = c(100 - dotbar_width, dotbar_width)
-              )
-
-              if (HasStimulus(X)) {
-                spacer <- ggplot2::ggplot() + cowplot::theme_nothing()
-                bottom_row <- cowplot::plot_grid(
-                  stim_plot, spacer,
-                  ncol = 2, align = "h",
-                  rel_widths = c(100 - dotbar_width, dotbar_width)
-                )
-                return(cowplot::plot_grid(top_row, bottom_row, ncol = 1, align = "v",
-                                          rel_heights = c(rel_data_height(length(ch_final)), 1)))
-              } else {
-                return(top_row)
-              }
-            }
-
-            ## ---- No dotbar: just heat (and optional stim below) ----
-            if (HasStimulus(X)) {
-              upper <- heat + theme(axis.title.x = element_blank(),
-                                    axis.text.x  = element_blank(),
-                                    axis.ticks.x = element_blank())
-              return(plot_grid(upper, stim_plot, ncol = 1, align = "v",
-                               rel_heights = c(rel_data_height(length(ch_final)), 1)))
-            } else {
-              return(heat)
-            }
-          })
-
-
-
-
-# ---- Internal: per-recording PSTH builder --------------------------------
-#' Build per-recording PSTH (assumes a single channel)
-#'
-#' Splits by RecordingID, averages trials (via \code{AverageTrials()}),
-#' converts to data.frame (ReturnAs = "freq") and returns a stacked data.frame
-#' with \strong{units}-typed \code{Time}, \code{Value}, and (if present) \code{Stimulus}.
-#' No averaging across channels is performed; instead this method \emph{requires}
-#' that \code{X} contains exactly one channel. The caller must subset beforehand.
-#'
-#' @param X         An \code{EPhysContinuous} object (single channel).
-#' @param trim      Numeric in [0, 0.5]; trial-end trimming passed to \code{AverageTrials()}.
-#' @param normalize Logical; if \code{TRUE}, per-recording min–max normalization on
-#'                  \code{Value}. The result keeps \code{units} class with unit \code{1}.
-#' @return data.frame with columns:
-#'   \item{RecordingID}{Factor in the final order set by the caller.}
-#'   \item{Time}{\code{units} vector.}
-#'   \item{Value}{\code{units} vector (Hz unless \code{normalize=TRUE} → unitless 1).}
-#'   \item{Stimulus}{\code{units} vector, if present in \code{as.data.frame()}.}
-#' @name build_rec_psth_df
-#' @keywords internal
-setGeneric("build_rec_psth_df", function(X, trim = 0.1, normalize = FALSE)
-  standardGeneric("build_rec_psth_df"))
-
-#' @describeIn build_rec_psth_df Method for EPhysContinuous
-setMethod("build_rec_psth_df",
-          signature(X = "EPhysContinuous"),
-          function(X, trim = 0.1, normalize = FALSE) {
-
-            md <- Metadata(X)
-
-            # enforce single-channel invariant
-            ch <- Channels(X)
-            if (length(ch) != 1L)
-              stop("`build_rec_psth_df` expects exactly ONE channel in `X`. ",
-                   "Subset at the caller (e.g., Subset(X, Channels = ...)).")
-
-            rec_all <- md$RecordingID
-            rec_ids <- unique(rec_all)  # original first-appearance order
-
-            out <- vector("list", length(rec_ids))
-
-            for (i in seq_along(rec_ids)) {
-              rid <- rec_ids[i]
-              xi  <- Subset(X, RecordingID = rid)           # same single channel
-
-              avg <- AverageTrials(xi, trim = trim)    # average trials only
-              dfi <- as.data.frame(avg, ReturnAs = "freq")
-
-              # Keep units; do NOT drop here.
-              keep <- c("Time", "Value")
-              if ("Stimulus" %in% names(dfi)) keep <- c(keep, "Stimulus")
-              dfi <- dfi[, keep, drop = FALSE]
-
-              # Optional normalization (min–max) on units-valued column:
-              if (isTRUE(normalize)) {
-                vnum <- drop_units(dfi$Value)
-                rng  <- range(vnum, finite = TRUE)
-                if (diff(rng) > 0) vnum <- (vnum - rng[1]) / diff(rng) else vnum <- vnum * 0
-                dfi$Value <- set_units(vnum, 1)  # unitless but still class 'units'
-              }
-
-              dfi$RecordingID <- rid
-              out[[i]] <- dfi
-            }
-
-            df <- do.call(rbind, out)
-            # RecordingID will be factored (and ordered) by the caller.
-            df
-          })
-
-# ---- Main plotting method (by recording; single channel) -----------------
-
-setGeneric("ggPSTHHeatmapByRecording",
-           function(X,
-                    normalize    = FALSE,
-                    sort_by      = NULL,
-                    NoRowLabels  = FALSE,
-                    Legend       = TRUE,
-                    PlotTitle    = "Average PSTH per Recording",
-                    trim         = 0.1,
-                    dot_position = NULL,
-                    dot_size     = 1,
-                    dot_color    = "grey50",
-                    dotbar_width = 2)
-             standardGeneric("ggPSTHHeatmapByRecording"))
-
-#' ggPSTHHeatmapByRecording for EPhysContinuous (+ optional stimulus & right dot strip)
-#'
-#' Heatmap with one row per \code{RecordingID}, using the single channel present
-#' in \code{X}. Trials are averaged via \code{AverageTrials()}, then plotted.
-#' Optionally normalizes per recording, sorts rows via \code{SortRun()}, and
-#' adds a right-side dot strip keyed per recording.
-#'
-#' @inheritParams as.data.frame.EPhysContinuous-method
-#' @param normalize  Logical; if \code{TRUE}, per-recording min–max normalization (unitless \code{1}).
-#' @param sort_by    Passed to \code{SortRun(X, sort_by)} to derive row order.
-#' @param NoRowLabels,Legend,PlotTitle,trim See channel-based variant.
-#' @param dot_position,dot_size,dot_color,dotbar_width See channel-based variant; all interpreted per recording.
-#' @return A \pkg{cowplot} object.
-#' @importFrom ggplot2 ggplot aes geom_tile labs theme_minimal theme element_blank
-#' @importFrom ggplot2 margin scale_y_discrete scale_x_continuous scale_fill_viridis_c
-#' @importFrom cowplot plot_grid theme_nothing
-#' @importFrom units deparse_unit drop_units
-#' @importFrom cowplot plot_grid theme_nothing
-#' @describeIn ggPSTHHeatmap ggPSTHHeatmapByRecording
-#' @export
-setMethod("ggPSTHHeatmapByRecording",
-          signature(X = "EPhysContinuous"),
-          function(X,
-                   normalize    = FALSE,
-                   sort_by      = NULL,
-                   NoRowLabels  = FALSE,
-                   Legend       = TRUE,
-                   PlotTitle    = "Average PSTH per Recording",
-                   trim         = 0,
-                   dot_position = NULL,
-                   dot_size     = 1,
-                   dot_color    = "grey50",
-                   dotbar_width = 2) {
-
-            # Build per-recording df with UNITS columns (single channel invariant)
-            df <- build_rec_psth_df(X, trim = trim, normalize = normalize)
-
-            # Decide final RecordingID order using SortRun()
-            md <- Metadata(X)
-            run_order_idx <- SortRun(as(X, "EPhysContainer"), sort_by = sort_by)
-            ord_rec <- unique(md$RecordingID[run_order_idx])
-            if (!length(ord_rec)) {
-              # fallback: original first-appearance order in Metadata
-              ord_rec <- unique(md$RecordingID)
-            }
-            # Keep only those present (after sampling later)
-            # (We set levels after optional sampling.)
-
-            # Finalize factor levels
-            present <- unique(df$RecordingID)
-            final_levels <- intersect(ord_rec, present)
-            if (!length(final_levels)) final_levels <- present
-            df$RecordingID <- factor(df$RecordingID, levels = final_levels)
-
-            # Capture units for axis/legend labels before dropping for ggplot
-            time_u <- deparse_unit(df$Time)
-            val_u  <- deparse_unit(df$Value)
-
-            # ggplot does not handle units -> drop only for plotting aesthetics
-            df$Time  <- drop_units(df$Time)
-            df$Value <- drop_units(df$Value)
-            if ("Stimulus" %in% names(df)) {
-              df$Stimulus <- drop_units(df$Stimulus)
-            }
-
-            # Heatmap
-            heat <- ggplot(df, aes(x = Time, y = RecordingID, fill = Value)) +
-              geom_tile() +
-              labs(x = paste0("Time (", time_u, ")"),
-                            y = "Recording",
-                            title = PlotTitle) +
-              theme_minimal() +
-              theme(
-                panel.grid  = element_blank(),
-                plot.margin = margin(0,0,0,0)
-              ) +
-              scale_y_discrete(expand = c(0,0))+
-              scale_x_continuous(expand = c(0,0))
-
+            # ---- optional per-row normalization ----
             if (isTRUE(normalize)) {
-              heat <- heat + scale_fill_viridis_c(name = "Normalized Rate")
-            } else {
-              lab <- if (is.null(val_u) || val_u == "1") "Rate" else paste0("Rate (", val_u, ")")
-              heat <- heat + scale_fill_viridis_c(name = lab)
+              rmin <- apply(mat, 1, min, na.rm = TRUE)
+              rmax <- apply(mat, 1, max, na.rm = TRUE)
+              den  <- rmax - rmin
+              den[!is.finite(den) | den <= 0] <- NA_real_
+              mat  <- (mat - rmin) / den
+              mat[is.na(mat)] <- 0
             }
 
-            if (isTRUE(NoRowLabels)) {
-              heat <- heat + theme(axis.text.y = element_blank(),
-                                            axis.ticks.y = element_blank())
+            # ---- long df ----
+            nU <- nrow(mat)
+            nT <- ncol(mat)
+
+            df <- data.frame(
+              unit = rep(unit_id, each = nT),
+              t    = rep(time_centers[keep_t], times = nU),
+              v    = as.vector(t(mat)),
+              stringsAsFactors = FALSE
+            )
+
+            df$y <- unname(lay$y_map[as.character(df$unit)])
+
+            time_unit <- tryCatch(as.character(EPhysData::TimeUnits(X))[1], error = function(e) NULL)
+            if (!length(time_unit) || is.na(time_unit) || !nzchar(time_unit)) {
+              time_unit <- NULL
             }
-            if (!isTRUE(Legend)) {
-              heat <- heat + theme(legend.position = "none")
-            }
 
-            # Stimulus (from full object; time-aligned)
-            if (HasStimulus(X)) {
-              stim_plot <- ggStimulusPlot(X, NoRowLabels = NoRowLabels)
-              heat <- heat + theme(axis.text.x = element_blank(),
-                                            axis.ticks.x = element_blank())
-            }
+            p <- ggPSTHHeatmap.draw(
+              df          = df,
+              lay         = lay,
+              bin_dur     = bin_dur,
+              xlim_use    = xlim_use,
+              time_unit   = time_unit,
+              PlotTitle   = PlotTitle,
+              normalize   = normalize,
+              value       = value,
+              NoRowLabels = NoRowLabels,
+              Legend      = Legend
+            )
 
-            # Right-side dot strip?
-            add_dotbar <- !is.null(dot_position) &&
-              (
-                length(dot_size) > 1L ||
-                  length(dot_color) > 1L ||
-                  (is.character(dot_size) && length(dot_size) == 1L) ||
-                  (is.character(dot_color) && length(dot_color) == 1L)
-              )
+            if (isTRUE(show_stimulus)) {
+              stim_plot <- tryCatch({
+                sp <- ggStimulusPlot(X, NoRowLabels = isTRUE(NoRowLabels))
+                if (is.null(sp)) return(NULL)
+                sp + ggplot2::coord_cartesian(xlim = xlim_use, expand = FALSE)
+              }, error = function(e) NULL)
 
-            if (add_dotbar) {
-              rec_final <- levels(df$RecordingID)
-              dot_info  <- .coerce_dot_inputs(X, rec_final, dot_position, dot_size, dot_color)
-              dot_plot  <- build_dotbar_plot(rec_final, dot_info, y_label = "Recording")
-
-              top_row <- plot_grid(
-                heat, dot_plot,
-                ncol = 2, align = "h",
-                rel_widths = c(100 - dotbar_width, dotbar_width)
-              )
-
-              if (HasStimulus(X)) {
-                spacer <- ggplot() + theme_nothing()
-                bottom_row <- plot_grid(
-                  stim_plot, spacer,
-                  ncol = 2, align = "h",
-                  rel_widths = c(100 - dotbar_width, dotbar_width)
+              if (!is.null(stim_plot) && requireNamespace("cowplot", quietly = TRUE)) {
+                p2 <- p + ggplot2::theme(
+                  axis.text.x  = ggplot2::element_blank(),
+                  axis.ticks.x = ggplot2::element_blank(),
+                  axis.title.x = ggplot2::element_blank()
                 )
-                return(plot_grid(top_row, bottom_row, ncol = 1, align = "v",
-                                          rel_heights = c(rel_data_height(length(rec_final)), 1)))
-              } else {
-                return(top_row)
+                out <- cowplot::plot_grid(
+                  p2, stim_plot, ncol = 1, align = "v", axis = "lr",
+                  rel_heights = c(1, stimulus_height)
+                )
+                #attr(out, "heatmap_data") <- df
+                return(out)
               }
             }
 
-            # No dotbar
-            if (HasStimulus(X)) {
-              upper <- heat + theme(axis.title.x = element_blank(),
-                                             axis.text.x  = element_blank(),
-                                             axis.ticks.x = element_blank())
-              return(plot_grid(upper, stim_plot, ncol = 1, align = "v",
-                                        rel_heights = c(rel_data_height(length(levels(df$RecordingID))), 1)))
-            } else {
-              return(heat)
-            }
+            p
           })
 
 
-
-# ---- Helpers for dot-strip inputs (unchanged logic; works per RecordingID) ----
-
-meta_first_per_recording <- function(X, col) {
-  md <- Metadata(X)
-  rids <- md$RecordingID
-  split_vals <- split(md[[col]], rids)
-  sapply(split_vals, function(v) {
-    w <- which(!is.na(v))
-    if (length(w)) v[w[1]] else NA
-  })
-}
-
-.coerce_dot_inputs <- function(X, rec_ids, dot_position, dot_size, dot_color) {
-  # Position
-  if (is.null(dot_position)) {
-    pos <- NULL
-  } else if (is.character(dot_position) && length(dot_position) == 1L) {
-    pos <- meta_first_per_recording(X, dot_position)
-    pos <- as.numeric(pos[rec_ids])
-  } else if (length(dot_position) == 1L && is.numeric(dot_position)) {
-    pos <- rep(dot_position, length(rec_ids))
-  } else {
-    if (!is.numeric(dot_position))
-      stop("dot_position must be numeric, NULL, or a Metadata column name.")
-    pos <- if (!is.null(names(dot_position))) as.numeric(dot_position[rec_ids]) else {
-      if (length(dot_position) != length(rec_ids))
-        stop("dot_position must be length 1 or length(n_recordings).")
-      as.numeric(dot_position)
-    }
-  }
-
-  # Size
-  if (is.character(dot_size) && length(dot_size) == 1L) {
-    siz <- meta_first_per_recording(X, dot_size)
-    siz <- as.numeric(siz[rec_ids])
-  } else if (length(dot_size) == 1L && is.numeric(dot_size)) {
-    siz <- rep(as.numeric(dot_size), length(rec_ids))
-  } else {
-    if (!is.numeric(dot_size))
-      stop("dot_size must be numeric or a Metadata column name.")
-    siz <- if (!is.null(names(dot_size))) as.numeric(dot_size[rec_ids]) else {
-      if (length(dot_size) != length(rec_ids))
-        stop("dot_size must be length 1 or length(n_recordings).")
-      as.numeric(dot_size)
-    }
-  }
-
-  # Color
-  if (is.character(dot_color) && length(dot_color) == 1L && dot_color %in% names(Metadata(X))) {
-    colv <- meta_first_per_recording(X, dot_color)
-    colv <- as.character(colv[rec_ids])
-  } else if (length(dot_color) == 1L) {
-    colv <- rep(as.character(dot_color), length(rec_ids))
-  } else {
-    if (length(dot_color) != length(rec_ids))
-      stop("dot_color must be length 1 or length(n_recordings).")
-    colv <- as.character(dot_color)
-  }
-
-  list(pos = pos, size = siz, color = colv)
-}
-
-coerce_dot_inputs_channels <- function(X, ch_final, dot_position, dot_size, dot_color) {
-  ch_orig <- as.character(Channels(X))
-
-  # Convenience for pulling from ChannelMetadata by name
-  pull_chmeta <- function(x) ChannelMetadata(X, x)
-
-  # POSITION
-  if (is.null(dot_position)) {
-    pos <- NULL
-  } else if (is.character(dot_position) && length(dot_position) == 1L &&
-             dot_position %in% colnames(ChannelMetadata(X))) {
-    pos <- as.numeric(pull_chmeta(dot_position))
-  } else if (length(dot_position) == 1L && is.numeric(dot_position)) {
-    pos <- rep(as.numeric(dot_position), length(ch_orig))
-  } else {
-    if (!is.numeric(dot_position))
-      stop("dot_position must be numeric or a ChannelMetadata column name.")
-    if (length(dot_position) != length(ch_orig))
-      stop("dot_position must be length 1 or length(Channels(X)).")
-    pos <- as.numeric(dot_position)
-  }
-
-  # SIZE
-  if (is.character(dot_size) && length(dot_size) == 1L &&
-      dot_size %in% colnames(ChannelMetadata(X))) {
-    siz <- as.numeric(pull_chmeta(dot_size))
-  } else if (length(dot_size) == 1L && is.numeric(dot_size)) {
-    siz <- rep(as.numeric(dot_size), length(ch_orig))
-  } else {
-    if (!is.numeric(dot_size))
-      stop("dot_size must be numeric or a ChannelMetadata column name.")
-    if (length(dot_size) != length(ch_orig))
-      stop("dot_size must be length 1 or length(Channels(X)).")
-    siz <- as.numeric(dot_size)
-  }
-
-  # COLOR
-  if (is.character(dot_color) && length(dot_color) == 1L &&
-      dot_color %in% colnames(ChannelMetadata(X))) {
-    colv <- as.character(pull_chmeta(dot_color))
-  } else if (length(dot_color) == 1L) {
-    colv <- rep(as.character(dot_color), length(ch_orig))
-  } else {
-    if (length(dot_color) != length(ch_orig))
-      stop("dot_color must be length 1 or length(Channels(X)).")
-    colv <- as.character(dot_color)
-  }
-
-  # Reorder to FINAL channel order
-  idx <- match(ch_final, ch_orig)
-  list(
-    pos   = if (is.null(pos)) NULL else pos[idx],
-    size  = siz[idx],
-    color = colv[idx]
-  )
-}
-
-
-#' Build right-side dotbar plot (generic helper)
+#' Draw helper for PSTH heatmaps
 #'
-#' @param y_values Character vector of y-axis values (levels shown top-to-bottom).
-#' @param dot_info List with numeric vectors \code{pos}, \code{size} and a
-#'   character vector \code{color}; all length \code{length(y_values)}.
-#' @param y_label  Character label for the y-axis (e.g., "Channel" or "Recording").
-#' @return A ggplot object.
+#' Internal plotting helper used by \code{\link{ggPSTHHeatmap}} and
+#' \code{\link{ggPSTHHeatmap.primitive}}.
+#'
+#' Expects a long-format data frame with columns \code{t} (time), \code{y} (row id)
+#' and \code{v} (value mapped to fill). If \code{facet_row} is provided, the plot is
+#' faceted horizontally with \code{\link[ggplot2:facet_grid]{ggplot2::facet_grid()}}
+#' by that variable.
+#'
+#' @param df A \code{data.frame} with columns \code{t}, \code{y}, \code{v}, and
+#'   optionally the column named in \code{facet_row}.
+#' @param lay A layout list; must contain \code{y_axis_title}. If \code{df$y} is
+#'   numeric (continuous), \code{lay$y_breaks} and \code{lay$y_labels} are used.
+#' @param bin_dur Numeric scalar giving the tile width, i.e. the time-bin duration.
+#' @param xlim_use Numeric length-2 vector or \code{NULL}. Passed to
+#'   \code{\link[ggplot2:coord_cartesian]{ggplot2::coord_cartesian()}}.
+#' @param time_unit Character scalar or \code{NULL}. If non-empty, the x-axis label
+#'   becomes \dQuote{Time (<unit>)}; otherwise it is simply \dQuote{Time}.
+#' @param PlotTitle Character scalar used as plot title.
+#' @param normalize Logical. Controls the fill legend title.
+#' @param value Character. Used to choose the fill legend title; \code{"freq"}
+#'   yields \dQuote{Rate (1/s)}, otherwise \dQuote{Count}.
+#' @param NoRowLabels Logical. If \code{TRUE}, hides y-axis tick labels and ticks.
+#' @param Legend Logical. If \code{FALSE}, hides the legend.
+#' @param facet_row \code{NULL} or character scalar naming a column in \code{df} used
+#'   for horizontal faceting.
+#' @param y_label_fun \code{NULL} or function. Optional post-processing function for
+#'   y-axis labels.
+#'
+#' @return A \code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object.
+#'
+#' @seealso \code{\link{ggPSTHHeatmap}}, \code{\link{ggPSTHHeatmap.primitive}}
 #' @keywords internal
-#' @importFrom ggplot2 ggplot aes geom_point scale_size_continuous
-#' @importFrom ggplot2 scale_x_continuous labs theme margin
-#' @importFrom cowplot theme_nothing
-build_dotbar_plot <- function(y_values, dot_info, y_label = "Recording") {
-  side_df <- data.frame(
-    Y       = factor(y_values, levels = y_values),
-    DotX    = as.numeric(dot_info$pos),
-    DotSize = as.numeric(dot_info$size),
-    DotColor= dot_info$color,
+ggPSTHHeatmap.draw <- function(df,
+                               lay,
+                               bin_dur,
+                               xlim_use,
+                               time_unit = NULL,
+                               PlotTitle,
+                               normalize = FALSE,
+                               value = "count",
+                               NoRowLabels = FALSE,
+                               Legend = TRUE,
+                               facet_row = NULL,
+                               y_label_fun = NULL) {
+
+  if (!is.null(time_unit)) {
+    stopifnot(is.character(time_unit), length(time_unit) == 1L)
+  }
+
+  x_lab <- if (!is.null(time_unit) && nzchar(time_unit)) {
+    paste0("Time (", time_unit, ")")
+  } else {
+    "Time"
+  }
+
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = t, y = y, fill = v)) +
+    ggplot2::geom_raster(interpolate = FALSE) +#ggplot2::geom_tile(width = bin_dur, height = 1, colour = NA, linewidth = 0, na.rm = TRUE) +
+    ggplot2::scale_x_continuous(expand = c(0, 0)) +
+    ggplot2::coord_cartesian(xlim = xlim_use, expand = FALSE) +
+    ggplot2::labs(
+      x = x_lab,
+      y = lay$y_axis_title,
+      title = PlotTitle
+    ) +
+    ggpubr::theme_pubr(base_size = 8) +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(0, 0, 0, 0),
+      legend.position = "bottom"
+    )
+
+  if (is.factor(df$y) || is.character(df$y)) {
+    p <- p + ggplot2::scale_y_discrete(
+      labels = if (is.function(y_label_fun)) y_label_fun else ggplot2::waiver(),
+      expand = ggplot2::expansion(mult = c(0.02, 0.02))
+    )
+  } else {
+    p <- p + ggplot2::scale_y_continuous(
+      breaks = lay$y_breaks,
+      labels = lay$y_labels,
+      expand = ggplot2::expansion(mult = c(0.02, 0.02))
+    )
+  }
+
+  p <- p + ggplot2::scale_fill_viridis_c(
+    name = if (isTRUE(normalize)) "Normalized"
+    else if (identical(value, "freq")) "Rate (1/s)"
+    else "Count"
+  )
+
+  if (!is.null(facet_row)) {
+    if (!facet_row %in% names(df)) {
+      stop("facet_row '", facet_row, "' not found in df.")
+    }
+    p <- p + ggplot2::facet_grid(
+      stats::as.formula(paste0("`",facet_row, "` ~ .")),
+      scales = "free_y",
+      space  = "free_y"
+    )
+  }
+
+  if (isTRUE(NoRowLabels)) {
+    p <- p + ggplot2::theme(
+      axis.text.y  = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank()
+    )
+  }
+  if (!isTRUE(Legend)) {
+    p <- p + ggplot2::theme(legend.position = "none")
+  }
+
+  p
+}
+
+
+#' Primitive PSTH heatmap renderer
+#'
+#' @param bin_mtx For \code{ggPSTHHeatmap.primitive()} only: numeric matrix whose
+#'   rows correspond to observations/units and whose columns correspond to time bins.
+#' @param meta For \code{ggPSTHHeatmap.primitive()} only: \code{data.frame} with
+#'   \code{nrow(meta) == nrow(bin_mtx)}. Used for ordering, row labeling and
+#'   optional faceting.
+#' @param time_unit For \code{ggPSTHHeatmap.primitive()} only: character scalar
+#'   giving the x-axis time unit label.
+#' @param sort_by For \code{ggPSTHHeatmap.primitive()} only: character vector of
+#'   column names in \code{meta}. Rows are ordered by these variables, within each
+#'   facet when \code{facet_row} is set. Row labels are formed by concatenating
+#'   these variables with \dQuote{ · }.
+#' @param facet_row For \code{ggPSTHHeatmap.primitive()} only: \code{NULL} or
+#'   character scalar naming a column in \code{meta}. If provided, the heatmap is
+#'   faceted horizontally by this variable.
+#' @param ... Further arguments reserved for future use.
+#'
+#' @details
+#' \code{ggPSTHHeatmap.primitive()} is a low-level interface to the same plotting
+#' backend used by \code{\link{ggPSTHHeatmap}}. It works directly on a pre-binned
+#' matrix plus matching metadata and therefore does not require an
+#' \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object.
+#'
+#' @seealso \code{\link{ggPSTHHeatmap}}, \code{\link{ggPSTHHeatmap.draw}}
+#' @rdname ggPSTHHeatmap
+#' @export
+ggPSTHHeatmap.primitive <- function(bin_mtx,
+                                    meta,
+                                    time_unit = NULL,
+                                    PlotTitle = NULL,
+                                    bin_dur,
+                                    xlim_use = NULL,
+                                    normalize = FALSE,
+                                    value = "count",
+                                    NoRowLabels = FALSE,
+                                    Legend = TRUE,
+                                    sort_by = NULL,
+                                    facet_row = NULL,
+                                    ...) {
+
+  stopifnot(is.matrix(bin_mtx))
+  stopifnot(is.data.frame(meta))
+  stopifnot(nrow(bin_mtx) == nrow(meta))
+
+  if (!is.null(time_unit)) {
+    stopifnot(is.character(time_unit), length(time_unit) == 1L)
+  }
+
+  if (!is.null(facet_row) && !facet_row %in% names(meta)) {
+    stop("facet_row '", facet_row, "' not found in meta.")
+  }
+
+  if (!is.null(colnames(bin_mtx))) {
+    time_centers <- as.numeric(colnames(bin_mtx))
+    if (anyNA(time_centers)) {
+      stop("colnames(bin_mtx) must be numeric if provided.")
+    }
+  } else {
+    time_centers <- ((seq_len(ncol(bin_mtx)) - 1) * bin_dur) + bin_dur / 2
+  }
+  nU <- nrow(bin_mtx)
+  nT <- ncol(bin_mtx)
+
+  sort_spec <- .parse_sort_by_spec(
+    sort_by = sort_by,
+    meta_names = names(meta),
+    exclude = facet_row
+  )
+
+  make_label <- function(m) {
+    if (!length(sort_spec$cols)) return(as.character(seq_len(nrow(m))))
+    apply(m[, sort_spec$cols, drop = FALSE], 1, function(z) paste(z, collapse = " · "))
+  }
+
+  ord <- .order_meta_rows(
+    meta = meta,
+    sort_spec = sort_spec,
+    split_by = facet_row
+  )
+
+  meta_o <- meta[ord, , drop = FALSE]
+  bin_o  <- bin_mtx[ord, , drop = FALSE]
+
+  row_lab <- make_label(meta_o)
+
+  row_id <- seq_len(nrow(meta_o))
+  y_id <- paste0(row_id, "||", row_lab)
+  y_label_fun <- function(x) sub("^[^|]+\\|\\|", "", x)
+
+  y_fac <- factor(y_id, levels = unique(y_id))
+
+  df <- data.frame(
+    t = rep(time_centers, times = nU),
+    y = rep(y_fac, each = nT),
+    v = as.vector(t(bin_o)),
     stringsAsFactors = FALSE
   )
-  ggplot(side_df, aes(x = DotX, y = Y, size = DotSize, color = DotColor)) +
-    geom_point(na.rm = TRUE) +
-    scale_size_continuous(range = c(0, 3)) +
-    scale_x_continuous(expand = c(0, 0)) +
-    theme_nothing() +
-    labs(y = y_label) +
-    theme(plot.margin = margin(0, 0, 0, 0))
+
+  if (!is.null(facet_row)) {
+    df[[facet_row]] <- rep(meta_o[[facet_row]], each = nT)
+  }
+
+  lay <- list(y_axis_title = "Units")
+
+  ggPSTHHeatmap.draw(
+    df          = df,
+    lay         = lay,
+    bin_dur     = bin_dur,
+    xlim_use    = xlim_use,
+    time_unit   = time_unit,
+    PlotTitle   = PlotTitle,
+    normalize   = normalize,
+    value       = value,
+    NoRowLabels = NoRowLabels,
+    Legend      = Legend,
+    facet_row   = facet_row,
+    y_label_fun = y_label_fun
+  )
 }
-rel_data_height <- function(n_rows) sqrt(sqrt(n_rows)) * 4
