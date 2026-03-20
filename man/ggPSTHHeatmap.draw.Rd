@@ -24,32 +24,32 @@ ggPSTHHeatmap.draw(
 optionally the column named in \code{facet_row}.}
 
 \item{lay}{A layout list; must contain \code{y_axis_title}. If \code{df$y} is
-numeric (continuous), \code{lay$y_breaks} and \code{lay$y_labels} are used.}
+numeric, \code{lay$y_breaks} and \code{lay$y_labels} are used for the y-axis.}
 
-\item{bin_dur}{Numeric scalar giving the tile width, i.e. the time-bin duration.}
+\item{bin_dur}{Numeric scalar giving the time-bin duration.}
 
 \item{xlim_use}{Numeric length-2 vector or \code{NULL}. Passed to
 \code{\link[ggplot2:coord_cartesian]{ggplot2::coord_cartesian()}}.}
 
-\item{time_unit}{Character scalar or \code{NULL}. If non-empty, the x-axis label
-becomes \dQuote{Time (<unit>)}; otherwise it is simply \dQuote{Time}.}
+\item{time_unit}{Character scalar or \code{NULL}. If non-empty, the x-axis
+label becomes \dQuote{Time (<unit>)}; otherwise it is simply \dQuote{Time}.}
 
-\item{PlotTitle}{Character scalar used as plot title.}
+\item{PlotTitle}{Character scalar or \code{NULL} used as plot title.}
 
-\item{normalize}{Logical. Controls the fill legend title.}
+\item{normalize}{Logical. Used to choose the fill legend title.}
 
-\item{value}{Character. Used to choose the fill legend title; \code{"freq"}
-yields \dQuote{Rate (1/s)}, otherwise \dQuote{Count}.}
+\item{value}{Character scalar. Used to choose the fill legend title;
+\code{"freq"} yields \dQuote{Rate (1/s)}, otherwise \dQuote{Count}.}
 
-\item{NoRowLabels}{Logical. If \code{TRUE}, hides y-axis tick labels and ticks.}
+\item{NoRowLabels}{Logical; if \code{TRUE}, hides y-axis tick labels and ticks.}
 
-\item{Legend}{Logical. If \code{FALSE}, hides the legend.}
+\item{Legend}{Logical; if \code{FALSE}, hides the legend.}
 
-\item{facet_row}{\code{NULL} or character scalar naming a column in \code{df} used
-for horizontal faceting.}
+\item{facet_row}{\code{NULL} or character scalar naming a column in \code{df}
+used for vertical faceting.}
 
-\item{y_label_fun}{\code{NULL} or function. Optional post-processing function for
-y-axis labels.}
+\item{y_label_fun}{\code{NULL} or function. Optional post-processing function
+applied to y-axis labels.}
 }
 \value{
 A \code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object.
@@ -59,10 +59,10 @@ Internal plotting helper used by \code{\link{ggPSTHHeatmap}} and
 \code{\link{ggPSTHHeatmap.primitive}}.
 }
 \details{
-Expects a long-format data frame with columns \code{t} (time), \code{y} (row id)
-and \code{v} (value mapped to fill). If \code{facet_row} is provided, the plot is
-faceted horizontally with \code{\link[ggplot2:facet_grid]{ggplot2::facet_grid()}}
-by that variable.
+Expects a long-format data frame with columns \code{t} (time), \code{y}
+(row position or row identifier) and \code{v} (value mapped to fill). If
+\code{facet_row} is provided, the plot is faceted vertically with
+\code{\link[ggplot2:facet_grid]{ggplot2::facet_grid()}} by that variable.
 }
 \seealso{
 \code{\link{ggPSTHHeatmap}}, \code{\link{ggPSTHHeatmap.primitive}}

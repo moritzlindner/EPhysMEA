@@ -5,7 +5,21 @@
 \alias{ggPSTHHeatmap.primitive}
 \title{PSTH heatmaps for EPhysContinuous objects and pre-binned matrices}
 \usage{
-ggPSTHHeatmap(X, ...)
+ggPSTHHeatmap(
+  X,
+  tlim = NULL,
+  value = c("freq", "count"),
+  normalize = FALSE,
+  show_stimulus = TRUE,
+  stimulus_height = 0.6,
+  row_labels = NULL,
+  label_col = NULL,
+  step_gap = 0,
+  step_order_decreasing = FALSE,
+  NoRowLabels = FALSE,
+  Legend = TRUE,
+  PlotTitle = "PSTH heatmap"
+)
 
 ggPSTHHeatmap.primitive(
   bin_mtx,
@@ -24,31 +38,60 @@ ggPSTHHeatmap.primitive(
 )
 }
 \arguments{
-\item{X}{An \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}}
-object in a valid configuration.}
+\item{X}{For \code{ggPSTHHeatmap()} only: an
+\code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object
+in a valid configuration.}
 
-\item{...}{Further arguments reserved for future use.}
+\item{tlim}{For \code{ggPSTHHeatmap()} only: optional numeric length-2 vector
+\code{c(tmin, tmax)} specifying the time window, in the units returned by
+\code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.}
+
+\item{value}{Character scalar controlling fill labeling. \code{"freq"} yields
+the legend title \dQuote{Rate (1/s)}; \code{"count"} yields \dQuote{Count}.
+In \code{ggPSTHHeatmap()}, \code{"freq"} additionally converts counts to
+rates by dividing by bin duration. In \code{ggPSTHHeatmap.primitive()}, the
+supplied matrix is plotted as-is, so callers should provide values already in
+the desired units.}
+
+\item{normalize}{Logical. In \code{ggPSTHHeatmap()}, if \code{TRUE}, each row is
+min-max normalised over time to the interval \code{[0, 1]}. In
+\code{ggPSTHHeatmap.primitive()}, the supplied matrix is plotted as-is, so any
+desired normalisation should be performed before calling the function.}
+
+\item{show_stimulus}{For \code{ggPSTHHeatmap()} only: logical; if \code{TRUE},
+stack a stimulus panel underneath using \code{\link{ggStimulusPlot}} when
+stimulus information is available.}
+
+\item{stimulus_height}{For \code{ggPSTHHeatmap()} only: relative height of the
+stimulus panel in
+\code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}.}
+
+\item{row_labels, label_col, step_gap, step_order_decreasing}{For
+\code{ggPSTHHeatmap()} only: same meaning as in \code{\link{ggEventRaster}}.}
+
+\item{NoRowLabels}{Logical; if \code{TRUE}, hide y-axis labels and ticks.}
+
+\item{Legend}{Logical; if \code{FALSE}, hide the heatmap legend.}
+
+\item{PlotTitle}{Character scalar or \code{NULL} used as plot title.}
 
 \item{bin_mtx}{For \code{ggPSTHHeatmap.primitive()} only: numeric matrix whose
-rows correspond to observations/units and whose columns correspond to time bins.}
+rows correspond to observations / units and whose columns correspond to time
+bins.}
 
 \item{meta}{For \code{ggPSTHHeatmap.primitive()} only: \code{data.frame} with
-\code{nrow(meta) == nrow(bin_mtx)}. Used for ordering, row labeling and
+\code{nrow(meta) == nrow(bin_mtx)}. Used for row ordering, row labeling and
 optional faceting.}
 
-\item{time_unit}{For \code{ggPSTHHeatmap.primitive()} only: character scalar
-giving the x-axis time unit label.}
+\item{time_unit}{For \code{ggPSTHHeatmap.primitive()} only: character scalar or
+\code{NULL} giving the x-axis time unit label.}
 
-\item{PlotTitle}{Character scalar used as plot title.}
+\item{bin_dur}{For \code{ggPSTHHeatmap.primitive()} only: numeric scalar giving
+the duration of one time bin.}
 
-\item{normalize}{Logical; if \code{TRUE}, min-max normalise each row over time
-to the interval \code{[0, 1]}.}
-
-\item{value}{One of \code{"freq"} or \code{"count"}.}
-
-\item{NoRowLabels}{Logical; hide y-axis labels and ticks.}
-
-\item{Legend}{Logical; show the heatmap legend.}
+\item{xlim_use}{For \code{ggPSTHHeatmap.primitive()} only: numeric length-2
+vector or \code{NULL}, passed to
+\code{\link[ggplot2:coord_cartesian]{ggplot2::coord_cartesian()}}.}
 
 \item{sort_by}{For \code{ggPSTHHeatmap.primitive()} only: character vector of
 column names in \code{meta}. Rows are ordered by these variables, within each
@@ -57,54 +100,60 @@ these variables with \dQuote{ · }.}
 
 \item{facet_row}{For \code{ggPSTHHeatmap.primitive()} only: \code{NULL} or
 character scalar naming a column in \code{meta}. If provided, the heatmap is
-faceted horizontally by this variable.}
+faceted vertically by this variable.}
 
-\item{tlim}{Optional numeric length-2 vector \code{c(tmin, tmax)} specifying the
-time window, in the units returned by
-\code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.}
-
-\item{show_stimulus}{Logical; if \code{TRUE}, stack a stimulus panel underneath
-using \code{\link{ggStimulusPlot}} when stimulus information is available.}
-
-\item{stimulus_height}{Relative height of the stimulus panel in
-\code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}.}
-
-\item{row_labels, label_col, step_gap, step_order_decreasing}{Same meaning as in
-\code{\link{ggEventRaster}}.}
+\item{...}{Further arguments reserved for future use.#'}
 }
 \value{
-A \code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object. For
-  \code{ggPSTHHeatmap()}, if \code{show_stimulus = TRUE} and a stimulus is
-  available, the result may be a \code{\link[cowplot:plot_grid]{cowplot::plot_grid()}}
-  composite.
+\code{ggPSTHHeatmap.primitive()} returns a
+\code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object.
+
+\code{ggPSTHHeatmap()} returns a
+\code{\link[ggplot2:ggplot]{ggplot2::ggplot}} object and, when
+\code{show_stimulus = TRUE} and a stimulus panel can be created, may instead
+return a
+\code{\link[cowplot:plot_grid]{cowplot::plot_grid()}} composite.
 }
 \description{
 \code{ggPSTHHeatmap()} draws PSTH-like heatmaps from an
 \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object
 using the same auto-layout logic as \code{\link{ggEventRaster}}.
-}
-\details{
-Expects \code{X} to be in one of two valid formats:
-\enumerate{
-  \item \code{length(\link[EPhysData:Channels]{Channels}(X)) == 1}: one channel
-  across all \code{\link[EPhysData:Metadata]{Metadata}(X)} rows (rows = traces).
-  \item \code{nrow(\link[EPhysData:Metadata]{Metadata}(X)) == 1}: all
-  \code{\link[EPhysData:Channels]{Channels}(X)} within the single metadata row
-  (rows = channels).
-}
-
-\code{X@Data} is assumed to be \code{[time × run × channel]}, as produced by
-\code{\link{Bin}} and optionally \code{\link{AverageTrials}}.
-
-\code{ggPSTHHeatmap.primitive()} exposes the same plotting backend for a
-pre-binned matrix plus matching metadata. In that interface, the x-axis time
-unit is supplied explicitly via \code{time_unit}, so no \code{X} object is
-required.
 
 \code{ggPSTHHeatmap.primitive()} is a low-level interface to the same plotting
 backend used by \code{\link{ggPSTHHeatmap}}. It works directly on a pre-binned
 matrix plus matching metadata and therefore does not require an
 \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous-class}} object.
+}
+\details{
+Valid input configurations for \code{ggPSTHHeatmap()} are:
+\enumerate{
+  \item \code{length(\link[EPhysData:Channels]{Channels}(X)) == 1}: one channel
+  across all \code{\link[EPhysData:Metadata]{Metadata}(X)} rows
+  (heatmap rows correspond to metadata rows / runs).
+  \item \code{nrow(\link[EPhysData:Metadata]{Metadata}(X)) == 1}: all
+  \code{\link[EPhysData:Channels]{Channels}(X)} within a single metadata row
+  (heatmap rows correspond to channels).
+}
+
+\code{X@Data} is assumed to be arranged as \code{[time × run × channel]}, as
+produced by \code{\link{Bin}} and optionally \code{\link{AverageTrials}}.
+
+\code{ggPSTHHeatmap.primitive()} exposes the same plotting backend for a
+pre-binned numeric matrix plus matching metadata. In that interface, time-bin
+duration and time-unit labeling are supplied explicitly, and no
+\code{EPhysContinuous} object is required.
+
+The matrix supplied in \code{bin_mtx} is plotted as provided. In particular,
+\code{value = "freq"} and \code{normalize = TRUE} affect legend labeling but do
+not transform the matrix internally; callers should apply any desired count-to-
+rate conversion or normalisation before calling this function.
+
+
+Row order is determined from \code{meta} via \code{sort_by}, optionally within
+each \code{facet_row} level. Row labels are generated by concatenating the
+\code{sort_by} columns with \dQuote{ · }. If \code{colnames(bin_mtx)} are
+present, they must be numeric and are interpreted as time-bin centers;
+otherwise time-bin centers are reconstructed from \code{bin_dur}.
 }
 \seealso{
 \code{\link{ggPSTHHeatmap.primitive}}, \code{\link{ggPSTHHeatmap.draw}},
