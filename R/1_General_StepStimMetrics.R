@@ -406,7 +406,7 @@ step_stim_resp_metrics <- function(x,
   # Resting stability
   base_times <- x[x >= (step_onset - shinomoto_win) & x < step_onset]
   if (!is.na(shinomoto_win)) {
-    Baseline_Rate <- step_spikerate(base_times, base_times)
+    Baseline_Rate <- step_spikerate(base_times, shinomoto_win)
     if(length(base_times) == 0){
       Shinomoto_Baseline_LV <- 1
     } else {

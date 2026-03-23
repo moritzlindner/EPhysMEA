@@ -83,7 +83,7 @@ recfield_response_map <- function(
     stopifnot(is.numeric(baserate_win), length(baserate_win) == 1L, is.finite(baserate_win), baserate_win > 0)
     t0 <- step_onsets[1]
     base_times <- x[x >= (t0 - baserate_win) & x < t0]
-    global_base_rate <- length(base_times) / baserate_win  # spikes/s
+    global_base_rate <- step_spikerate(base_times,baserate_win)  # spikes/s
   }
 
   # ---- Preallocate accumulators (sum & count for internal mean) ----
