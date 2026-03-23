@@ -28,7 +28,7 @@ Computes, for each stimulus window \code{[start, end)}, the mean firing
 rate as \code{count(start <= t < end) / (end - start)}. This function
 does **not** perform latency detection, ON/OFF splitting, or baseline
 subtraction; it is a straight full-window rate using
-\code{\link{step_response_amplitude}}.
+\code{\link{step_spikerate}}.
 }
 \details{
 Spike counting uses half-open intervals \code{[start, end)}. Windows with
@@ -48,7 +48,7 @@ motion_direction_amplitude(spikes, windows_df)
 
 }
 \seealso{
-\code{\link{step_response_amplitude}},
+\code{\link{step_spikerate}},
   \code{\link{motion_dsi}},
   \code{\link{motion_preferred_direction}}
 }

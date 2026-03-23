@@ -1,38 +1,154 @@
-#' Convert EPhysEvents to per-segment phase metrics (continuous form)
+#' Phase-based response metrics for `EPhysEvents`
 #'
-#' Computes a per-segment phase-based amplitude metric from an \code{EPhysEvents}
-#' object, using phases derived from \code{StimulusTrace} via
-#' \code{phasemetrics_stimulus_preprocess()}, and returns an \code{EPhysContinuous}
-#' whose time axis is the set of segment labels.
+#' Compute per-segment phase-locking or phase-modulation metrics from an
+#' \code{\link[EPhysData:EPhysEvents-class]{EPhysEvents}} object and return them
+#' as an \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous}} object.
 #'
-#' @inheritParams Bin
-#' @param method Character; one of:
-#'   \itemize{
-#'     \item \code{"rayleighZ"} — Rayleigh strength (\eqn{Z = nR^2}) inside a peak-centered window.
-#'     \item \code{"peak_trough"} — max−min of circular phase histogram counts.
-#'     \item \code{"opponent180"} — windowed count at peak minus count at peak+180°.
-#'     \item \code{"opponent90"}  — windowed count at peak minus the smaller of peak±90° windows.
-#'     \item \code{"opponent_best"} — \code{max(opponent180, opponent90)}.
-#'     \item \code{"isi50"} — 180° minus the shortest circular arc covering half the spikes.
+#' For each run and channel, spike times are assigned a stimulus phase derived
+#' from \code{StimulusTrace} using
+#' \code{\link{phasemetrics_stimulus_preprocess}} together with
+#' \code{\link{spike_phase_from_stimulus}}. Spikes are then grouped into
+#' user-defined temporal segments, and one phase metric is computed separately
+#' for each segment. The resulting output is an \code{EPhysContinuous} whose time
+#' axis corresponds to the numeric segment labels rather than physical time.
+#'
+#' This page documents both the high-level \code{PhaseMetrics()} method and the
+#' metric definitions used internally.
+#'
+#' @param X An \code{EPhysEvents} instance with non-empty
+#'   \code{\link[EPhysData:TimeTrace]{TimeTrace}} and
+#'   \code{\link[EPhysData:StimulusTrace]{StimulusTrace}}.
+#' @param method Character string specifying which phase metric to compute. One of:
+#'   \describe{
+#'     \item{\code{"rayleighZ"}}{Rayleigh phase-locking strength
+#'     \eqn{Z = n R^2}, computed within a peak-centered phase window for each
+#'     segment. Higher values indicate stronger concentration of spike phases.}
+#'
+#'     \item{\code{"peak_trough"}}{Difference between the largest and smallest
+#'     bin count of the circular phase histogram within a segment. Larger values
+#'     indicate stronger phase modulation.}
+#'
+#'     \item{\code{"opponent180"}}{Spike count in a peak-centered phase window
+#'     minus the spike count in the corresponding opponent window centered
+#'     180\eqn{^\circ} away.}
+#'
+#'     \item{\code{"opponent90"}}{Spike count in a peak-centered phase window
+#'     minus the smaller of the two orthogonal comparison windows centered at
+#'     peak \eqn{\pm 90^\circ}.}
+#'
+#'     \item{\code{"opponent_best"}}{The larger of \code{opponent180} and
+#'     \code{opponent90}.}
+#'
+#'     \item{\code{"isi50"}}{A compactness metric defined as
+#'     \eqn{180^\circ} minus the shortest circular arc containing half of all
+#'     spike phases within the segment. Larger values indicate tighter phase
+#'     clustering.}
 #'   }
-#' @param seg Either \code{NULL} (default; uses \code{floor(TimeTrace)}),
-#'   a \emph{function} mapping spike times to segment labels, or a \emph{numeric}
-#'   vector the same length as \code{TimeTrace} giving a label per time sample
-#'   (spike labels obtained by interpolation).
-#' @param bin_width_deg Histogram bin width (default \code{15}°).
-#' @param window_half_deg Half-width of the peak/opponent windows (default \code{45}°).
-#' @param flatten_trials Logical; if \code{TRUE} (default) first call
-#'   \code{FlattenTrials(X)} so each output trial corresponds to one \code{RecordingID}.
-#'   If \code{FALSE}, metrics are computed per input trial.
+#' @param seg Defines the segmentation of time into output bins:
+#'   \describe{
+#'     \item{\code{NULL}}{Default. Segments are defined by
+#'     \code{floor(TimeTrace(X))}.}
+#'     \item{function}{A function mapping spike times to numeric segment labels.}
+#'     \item{numeric vector}{A numeric vector aligned to
+#'     \code{TimeTrace(X)} giving one segment label per time sample; spike-wise
+#'     segment labels are then obtained by step-function interpolation.}
+#'   }
+#' @param bin_width_deg Width of the circular phase-histogram bins in degrees.
+#'   Used by the histogram-based metrics. Default: \code{15}.
+#' @param window_half_deg Half-width in degrees of the peak-centered and opponent
+#'   comparison windows used by the windowed phase metrics. Default: \code{45}.
+#' @param flatten_trials Logical; if \code{TRUE} (default), first call
+#'   \code{\link[EPhysData:FlattenTrials]{FlattenTrials}} so each output trial
+#'   corresponds to one \code{RecordingID}. If \code{FALSE}, metrics are
+#'   computed for each input run separately.
 #' @inheritParams EPhysData::`lapply-EPhys`
-#' @param ... Passed to \code{phasemetrics_stimulus_preprocess()} (e.g., \code{upsample}, \code{level}, \code{direction}).
+#' @param ... Further arguments forwarded to
+#'   \code{\link{phasemetrics_stimulus_preprocess}}, for example phase
+#'   preprocessing options such as \code{upsample}, \code{level}, or
+#'   \code{direction}.
 #'
-#' @return An \code{EPhysContinuous} with \code{Data} shaped
-#'   \code{[nSegments × nTrialsOut × nChannels]} containing the chosen metric per segment.
-#'   \code{TimeTrace} equals the numeric segment labels; \code{StimulusTrace} is length 0.
-#' @keywords internal
-#' @importClassesFrom EPhysData EPhysEvents
-#' @importFrom EPhysData Metadata Channels TimeTrace StimulusTrace lapply HasStimulus
+#' @details
+#' \strong{Workflow:}
+#' \enumerate{
+#'   \item Optionally flatten repeated trials by \code{RecordingID} using
+#'   \code{\link[EPhysData:FlattenTrials]{FlattenTrials}}.
+#'   \item Derive a continuous phase trace from the stimulus with
+#'   \code{\link{phasemetrics_stimulus_preprocess}}.
+#'   \item Map each spike to a stimulus phase using
+#'   \code{\link{spike_phase_from_stimulus}}.
+#'   \item Assign each spike to a segment.
+#'   \item Compute the selected phase metric separately for each segment and
+#'   each channel.
+#'   \item Store the results in an \code{EPhysContinuous} object with dimensions
+#'   \code{segment × trial × channel}.
+#' }
+#'
+#' \strong{Segmentation:}
+#' Segment labels define the output time axis. They need not correspond to
+#' physical seconds, although that is the default when \code{seg = NULL}. The
+#' output \code{TimeTrace} is simply the sorted unique numeric segment labels.
+#'
+#' \strong{Output semantics:}
+#' The returned object is called \code{EPhysContinuous} because it stores one
+#' numeric value per segment, run, and channel. However, those values are not
+#' samples of a continuous analog signal; they are summary statistics computed
+#' from all spikes falling into each segment.
+#'
+#' \strong{Metric implementation:}
+#' Exact peak finding, circular windowing, and tie handling are delegated to the
+#' underlying helper functions
+#' \code{\link{rayleigh_peak_by_segment}} and
+#' \code{\link{phasemetrics_opponent_modulation_depth_by_segment}}.
+#'
+#' @return
+#' An \code{\link[EPhysData:EPhysContinuous-class]{EPhysContinuous}} object with
+#' \code{Data} shaped \code{[nSegments × nTrialsOut × nChannels]}. Each entry is
+#' the selected phase metric for one segment, one output trial, and one channel.
+#'
+#' The returned object has:
+#' \describe{
+#'   \item{\code{TimeTrace}}{The numeric segment labels.}
+#'   \item{\code{StimulusTrace}}{An empty numeric vector, because the output no
+#'   longer represents a stimulus trace.}
+#'   \item{\code{Metadata}}{The metadata of the processed object, after optional
+#'   trial flattening.}
+#'   \item{\code{Channels}}{The same channel vector as the processed input.}
+#' }
+#'
+#' @section Low-level functions used on this page:
+#' \describe{
+#'   \item{\code{\link{phasemetrics_stimulus_preprocess}}}{Convert a stimulus
+#'   trace into a phase trace.}
+#'   \item{\code{\link{spike_phase_from_stimulus}}}{Assign stimulus phases to
+#'   individual spike times.}
+#'   \item{\code{\link{rayleigh_peak_by_segment}}}{Compute per-segment Rayleigh
+#'   peak strength.}
+#'   \item{\code{\link{phasemetrics_opponent_modulation_depth_by_segment}}}{Compute
+#'   histogram-based phase modulation metrics by segment.}
+#' }
+#'
+#' @examples
+#' # Compute per-second phase metrics after flattening repeated trials:
+#' # pm <- PhaseMetrics(ev, method = "rayleighZ")
+#'
+#' # Compute opponent modulation on custom segments:
+#' # pm <- PhaseMetrics(
+#' #   ev,
+#' #   method = "opponent_best",
+#' #   seg = function(t) floor(t / 0.5),
+#' #   window_half_deg = 30
+#' # )
+#'
+#' @importClassesFrom EPhysData EPhysEvents EPhysContinuous
+#' @importFrom EPhysData Metadata Channels TimeTrace TimeUnits StimulusTrace lapply HasStimulus
+#' @seealso
+#'   \code{\link{phasemetrics_stimulus_preprocess}},
+#'   \code{\link{spike_phase_from_stimulus}},
+#'   \code{\link{rayleigh_peak_by_segment}},
+#'   \code{\link{phasemetrics_opponent_modulation_depth_by_segment}},
+#'   \code{EPhysData::\link[EPhysData:FlattenTrials]{FlattenTrials}},
+#'   \code{EPhysData::\link[EPhysData:TimeTrace]{TimeTrace}},
+#'   \code{EPhysData::\link[EPhysData:StimulusTrace]{StimulusTrace}}
 #' @export
 setGeneric("PhaseMetrics", function(X,
                                     method = c("rayleighZ","peak_trough","opponent180","opponent90","opponent_best","isi50"),
@@ -47,6 +163,7 @@ setGeneric("PhaseMetrics", function(X,
   standardGeneric("PhaseMetrics")
 })
 
+#' @rdname PhaseMetrics
 #' @export
 setMethod("PhaseMetrics", signature(X = "EPhysEvents"),
           function(X,

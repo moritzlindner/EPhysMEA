@@ -120,43 +120,39 @@ trial_cor_pvalue_perm <- function(trials_by_time,
 
 #' TrialCorrelationTest generic
 #'
-#' Compute per-channel similarity of time-locked trials by Pearson correlations
-#' summarized on the Fisher-z scale, with Monte Carlo p-values from within-trial
-#' random shuffling (destroys alignment, preserves marginal distribution).
+#' Compute per-channel similarity of repeated time-locked runs by Pearson
+#' correlations summarized on the Fisher-z scale, with Monte Carlo p-values
+#' from within-run random shuffling.
 #'
 #' @param X An \code{EPhysContinuous} object.
 #' @param n_perm Integer; maximum number of permutations (default 1000). Early stopping may end sooner.
-#' @param future_args Named list forwarded to \link[=future.apply::future_lapply]{future.apply::future_lapply} for parallel execution (optional).
-#' @param seed Optional integer RNG seed; when provided, a per-channel seed of `seed + channel_index` is used.
+#' @param seed Optional integer RNG seed for reproducibility.
 #' @param min_perm Integer; minimum permutations before early stopping is considered (default 75).
 #' @param stop_lower Numeric; lower running p-hat threshold for early stopping (default 0.005).
 #' @param stop_upper Numeric; upper running p-hat threshold for early stopping (default 0.10).
-#' @param return_perm Logical; if TRUE, the low-level function also records permutation statistics
+#' @param return_perm Logical; currently retained for internal use.
 #' @inheritParams EPhysData::group_apply
 #'
-#' @importClassesFrom EPhysData EPhysContinuous
-#' @importFrom EPhysData Channels TimeTrace
+#' @details
+#' For \code{EPhysContinuous} input, repeated trials are defined as repeated
+#' runs within the same \code{RecordingID}. For each
+#' \code{RecordingID} and \code{Channel}, the method compares all usable runs
+#' pairwise. After \code{\link{Bin}}, runs remain separate; binning does not
+#' average or merge them. The \code{Repeat} column is not used explicitly by
+#' this method.
+#'
 #' @return
 #' A data.frame with one row per (\code{RecordingID}, \code{Channel}) containing:
 #' \describe{
 #'   \item{RecordingID}{Character; recording identifier copied from \code{Metadata(X)}.}
 #'   \item{Channel}{Character; channel name from \code{Channels(X)}.}
 #'   \item{mean_trial_r}{Numeric; Fisher-z-averaged zero-lag Pearson correlation
-#'     between all usable trial pairs for this channel. Trials that contain any
-#'     \code{NA} or have zero variance are discarded before the correlations are
-#'     computed.}
+#'     between all usable pairs of repeated runs for this recording and channel.}
 #'   \item{p_value}{Numeric; one-sided Monte Carlo permutation p-value
-#'     \eqn{\mathrm{Pr}(r_{\mathrm{perm}} \ge r_{\mathrm{obs}})} under the null
-#'     hypothesis obtained by independently shuffling the time-bin order within
-#'     each trial (destroys time locking but preserves the marginal per-trial
-#'     distribution). Early stopping is controlled by \code{min_perm},
-#'     \code{stop_lower}, and \code{stop_upper}.}
-#'   \item{n_trials}{Integer; number of trials that actually entered the
-#'     correlation (non-constant and without \code{NA} after filtering).}
-#'   \item{n_pairs}{Integer; number of distinct trial pairs contributing to
-#'     \code{mean_trial_r}.}
-#'   \item{n_perm_used}{Integer; number of permutations that were actually
-#'     evaluated before early stopping (at most \code{n_perm}).}
+#'     \eqn{\mathrm{Pr}(r_{\mathrm{perm}} \ge r_{\mathrm{obs}})}.}
+#'   \item{n_trials}{Integer; number of usable runs/trials entering the correlation.}
+#'   \item{n_pairs}{Integer; number of distinct run/trial pairs contributing to \code{mean_trial_r}.}
+#'   \item{n_perm_used}{Integer; number of permutations actually evaluated.}
 #' }
 #' @export
 setGeneric("TrialCorrelationTest", function(X,

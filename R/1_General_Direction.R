@@ -4,7 +4,7 @@
 #' rate as \code{count(start <= t < end) / (end - start)}. This function
 #' does **not** perform latency detection, ON/OFF splitting, or baseline
 #' subtraction; it is a straight full-window rate using
-#' \code{\link{step_response_amplitude}}.
+#' \code{\link{step_spikerate}}.
 #'
 #' @param spikes Numeric (or units) vector of spike times in seconds.
 #' @param windows_df A data.frame with at least the columns:
@@ -27,7 +27,7 @@
 #' A numeric vector of length \code{nrow(windows_df)} with mean firing rates
 #' (spikes/s) per window; entries may be \code{NA_real_} for invalid windows.
 #'
-#' @seealso \code{\link{step_response_amplitude}},
+#' @seealso \code{\link{step_spikerate}},
 #'   \code{\link{motion_dsi}},
 #'   \code{\link{motion_preferred_direction}}
 #'
@@ -70,7 +70,7 @@ motion_direction_amplitude <- function(
     width_win <- e - s
     if (width_win > 0) {
       spikes_win <- spikes[spikes >= s & spikes < e]
-      amp_win <- step_response_amplitude(spikes_win, width_win)
+      amp_win <- step_spikerate(spikes_win, width_win)
     }
     amp_win
   }
