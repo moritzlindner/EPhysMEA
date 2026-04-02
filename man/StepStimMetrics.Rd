@@ -62,7 +62,10 @@ to \code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.}
 
 \item{average_by_recordingID}{Logical; if \code{TRUE}, average all numeric
 metric columns across rows sharing the same \code{RecordingID} and
-\code{Channel} using \code{mean(na.rm = TRUE)}. Default: \code{FALSE}.}
+\code{Channel} using \code{mean(na.rm = TRUE)}. In addition,
+\code{Suppressed_By_Contrast} is summarized as the proportion of runs
+classified as suppressive and returned as
+\code{Suppressed_By_Contrast_Prop}. Default: \code{FALSE}.}
 
 \item{parallel}{logical.
 For \code{EPhysEvents} / \code{EPhysContinuous} methods only:
@@ -74,31 +77,37 @@ if \code{TRUE}, use \code{future.apply::future_lapply()} over runs.}
     \item{\code{}}{}
   }}
 
-\item{x}{Numeric vector of spike times already restricted to the relevant
+\item{x}{for step_spikerate: Numeric vector of spike times already restricted to the relevant
 analysis window.}
 
 \item{step_onset}{Numeric or \code{units} scalar giving step onset time.}
 
 \item{step_offset}{Numeric or \code{units} scalar giving step offset time.}
 
-\item{on_win}{Length of the ON counting window. Default: \code{0.4}.}
+\item{on_win}{Length of the short ON counting window used for
+\code{Farrow_ON} and for the short-window component of
+\code{Response_Amplitude}. Default: \code{0.4}.}
 
-\item{off_win}{Length of the OFF counting window. Default: \code{0.4}.}
+\item{off_win}{Length of the short OFF counting window used for
+\code{Farrow_OFF} and for the short-window component of
+\code{Response_Amplitude}. Default: \code{0.4}.}
 
-\item{trans_win}{Length of the response window used for transience and
-response amplitude. Default: \code{1.0}.}
+\item{trans_win}{Length of the response window used for the transience
+calculation and the optional returned PSTH. Default: \code{1.0}.}
 
-\item{binwidth}{PSTH bin width used for the transience calculation.
-Default: \code{0.02}.}
+\item{binwidth}{PSTH bin width used for transience, suppressive-response
+classification, and \code{Liang_OnOff_PreferenceIndex}. Default:
+\code{0.02}. Set to \code{NA} to skip binned-trace based quantities.}
 
-\item{smooth}{Logical; if \code{TRUE}, smooth the PSTH with a Gaussian kernel
-before peak-normalization and AUC calculation.}
+\item{smooth}{Logical; if \code{TRUE}, smooth binned response traces with a
+Gaussian kernel before downstream calculations.}
 
 \item{gauss_sd}{Standard deviation of the Gaussian smoothing kernel.
 Default: \code{0.02}.}
 
-\item{return_psth}{Logical; if \code{TRUE}, include the PSTH used for the
-transience calculation in the returned list.}
+\item{return_psth}{Logical; if \code{TRUE}, include the peak-normalized PSTH
+used for the transience calculation in the returned list. Requires finite
+\code{binwidth}.}
 
 \item{latency_alpha}{Quantile used to define the low-ISI threshold for the
 latency detector. Set to \code{NA} to skip latency calculation.}
@@ -117,10 +126,10 @@ when \code{Farrow_BiasIndex > 0}, otherwise offset.}
 \code{Baseline_Rate} and \code{Shinomoto_Baseline_LV}. Set to \code{NA} to
 skip both quantities.}
 
-\item{t}{Duration of the analysis window in seconds, used to convert spike
+\item{t}{for step_spikerate: Duration of the analysis window in seconds, used to convert spike
 count to mean spike rate.}
 
-\item{event}{Event time relative to which latency is measured.}
+\item{event}{for step_response_latency: Event time relative to which latency is measured.}
 }
 \value{
 If \code{average_by_recordingID = FALSE} (default), a wide \code{data.frame}
@@ -129,12 +138,39 @@ with one row per run × channel, containing identifiers such as
 each metric returned by \code{step_stim_resp_metrics()}.
 
 If \code{average_by_recordingID = TRUE}, a wide \code{data.frame} with one row
-per \code{RecordingID × Channel}; all numeric metric columns are averaged with
-\code{mean(na.rm = TRUE)}.
+per \code{RecordingID × Channel}. Numeric metric columns are averaged with
+\code{mean(na.rm = TRUE)}. The logical quantity
+\code{Suppressed_By_Contrast} is summarized as the proportion of runs with
+value \code{TRUE} and returned as \code{Suppressed_By_Contrast_Prop}.
 
-For \code{step_stim_resp_metrics()}, a named list containing the
-  metrics described under \emph{Computed metrics} on this page, and optionally
-  \code{psth} if \code{return_psth = TRUE}.
+For \code{step_stim_resp_metrics()}, a named list with elements
+  \describe{
+    \item{\code{Farrow_ON}}{Spike rate in the short ON window.}
+    \item{\code{Farrow_OFF}}{Spike rate in the short OFF window.}
+    \item{\code{Farrow_BiasIndex}}{Short-window ON/OFF bias index.}
+    \item{\code{Farrow_TransienceIndex}}{Peak-normalized transience index
+      from the selected response trace.}
+    \item{\code{ISIdrop_Latency}}{Latency estimate from
+      \code{\link{step_response_latency}} or \code{NA}.}
+    \item{\code{Response_Amplitude}}{Non-negative response modulation
+      magnitude relative to baseline, with suppressive responses treated as
+      positive amplitudes.}
+    \item{\code{Baseline_Rate}}{Baseline spike rate before step onset or
+      \code{NA}.}
+    \item{\code{Shinomoto_Baseline_LV}}{Shinomoto local variation of the
+      baseline spike train or \code{NA}.}
+    \item{\code{Mean_Step_Rate}}{Mean spike rate during the full step
+      interval \code{[step_onset, step_offset)}.}
+    \item{\code{Suppressed_By_Contrast}}{Logical flag indicating whether the
+      baseline-subtracted step response is classified as suppressive.}
+    \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference
+      index computed from baseline-subtracted ON- and OFF-aligned response
+      traces, or \code{NA} if unavailable.}
+    \item{\code{psth}}{Optional data.frame with columns \code{t_left},
+      \code{t_right}, and \code{rate}, giving the peak-normalized PSTH used
+      for \code{Farrow_TransienceIndex}. Returned only if
+      \code{return_psth = TRUE}.}
+  }
 
 For \code{step_spikerate()}, a numeric scalar giving mean spike rate
   in spikes/s, or \code{NA_real_} if the window duration is invalid.
@@ -159,57 +195,55 @@ the underlying metric definitions used internally.
 \strong{Iteration level:}
 \code{StepStimMetrics()} iterates over the contents of \code{X} via
 \code{EPhysData::lapply(X, ...)} and computes the metrics separately for each
-run and channel. The resulting list output is flattened into a wide
+run and channel. The resulting nested list output is flattened into a wide
 \code{data.frame}.
 
 \strong{Choice of ON-like versus OFF-like response window:}
 several metrics depend on whether a unit behaves more ON-like or OFF-like.
-This is decided from the Farrow bias index:
+This is decided from the Farrow bias index,
 \deqn{
 \mathrm{Farrow\_BiasIndex} =
 \frac{\mathrm{Farrow\_ON} - \mathrm{Farrow\_OFF}}
-     {\mathrm{Farrow\_ON} + \mathrm{Farrow\_OFF}}
+     {\mathrm{Farrow\_ON} + \mathrm{Farrow\_OFF}},
 }
-with the value defined as 0 when both counts are 0.
+where \code{Farrow_ON} and \code{Farrow_OFF} are short-window spike
+\emph{rates} and the value is defined as \code{0} when both rates are zero.
 
-If \code{Farrow_BiasIndex > 0}, the response is treated as ON-dominated and
-the transience and response-amplitude windows start at \code{step_onset}.
-Otherwise they start at \code{step_offset}.
+If \code{Farrow_BiasIndex > 0}, the response is treated as ON-dominated for
+the transience and automatic latency calculations and the corresponding
+analysis window starts at \code{step_onset}. Otherwise it starts at
+\code{step_offset}.
 
 \strong{Computed metrics:}
 \describe{
-  \item{\code{Farrow_ON}}{Spike count in the ON window
+  \item{\code{Farrow_ON}}{Spike rate in the ON window
   \code{[step_onset, step_onset + on_win)}.}
 
-  \item{\code{Farrow_OFF}}{Spike count in the OFF window
+  \item{\code{Farrow_OFF}}{Spike rate in the OFF window
   \code{[step_offset, step_offset + off_win)}.}
 
-  \item{\code{Farrow_BiasIndex}}{ON-versus-OFF preference, computed as
-  \code{(Farrow_ON - Farrow_OFF) / (Farrow_ON + Farrow_OFF)} and set to
-  \code{0} if both counts are zero. Positive values indicate relatively
+  \item{\code{Farrow_BiasIndex}}{Short-window ON-versus-OFF bias index,
+  computed as \code{(Farrow_ON - Farrow_OFF) / (Farrow_ON + Farrow_OFF)} and
+  set to \code{0} if both rates are zero. Positive values indicate relatively
   stronger ON responses, negative values relatively stronger OFF responses.}
 
   \item{\code{Farrow_TransienceIndex}}{A transience measure derived from a
-  PSTH in the selected response window of length \code{trans_win}. Spikes are
-  histogrammed using bins of width \code{binwidth}; optional Gaussian
-  smoothing can be applied. The PSTH is then peak-normalized so its maximum
-  equals 1, and the index is computed as the area under that normalized PSTH,
-  divided by \code{trans_win}. Smaller values indicate a more transient
-  response, larger values a more sustained response over the analysis window.}
+  binned response trace in the selected response window of length
+  \code{trans_win}. Spikes are histogrammed using bins of width
+  \code{binwidth}; optional Gaussian smoothing can be applied. The trace is
+  then peak-normalized so its maximum equals 1, and the index is computed as
+  the area under that normalized trace divided by \code{trans_win}. Smaller
+  values indicate a more transient response, larger values a more sustained
+  response over the analysis window.}
 
   \item{\code{ISIdrop_Latency}}{Latency from a chosen event
   (\code{step_onset}, \code{step_offset}, or automatically selected based on
-  the bias index) to the \emph{second spike} of the first post-event interspike
-  interval that is shorter than a threshold derived from pre-event baseline
-  ISIs. The threshold is
+  the bias index) to the \emph{second spike} of the first post-event
+  interspike interval that is shorter than a threshold derived from pre-event
+  baseline ISIs. The threshold is
   \code{max(Q_alpha, 0.6 * median(ISI_pre))}, where \code{Q_alpha} is the
   \code{latency_alpha} quantile of pre-event ISIs. Post-event spikes are only
   searched within \code{[event, event + latency_postduration)}.}
-
-  \item{\code{Response_Amplitude}}{Mean spike rate (spikes/s) over baseline in the selected
-  response window \code{[trans_start, trans_start + trans_win)}, where
-  \code{trans_start} is \code{step_onset} for ON-dominated responses and
-  \code{step_offset} otherwise.}
 
   \item{\code{Baseline_Rate}}{Mean firing rate in the baseline window
   immediately preceding step onset:
@@ -218,13 +252,35 @@ Otherwise they start at \code{step_offset}.
   \item{\code{Shinomoto_Baseline_LV}}{Mean local variation (LV) of adjacent
   ISIs in the baseline window, computed with
   \code{\link{spike_irreg_lv_shinomoto}}.}
+
+  \item{\code{Mean_Step_Rate}}{Mean spike rate during the full step interval
+  \code{[step_onset, step_offset)}.}
+
+  \item{\code{Suppressed_By_Contrast}}{Logical flag indicating whether the
+  baseline-subtracted step response is predominantly suppressive, defined by
+  a negative mean step trace and larger negative than positive area in that
+  trace.}
+
+  \item{\code{Response_Amplitude}}{Non-negative modulation magnitude based on
+  the larger of \code{Farrow_ON} and \code{Farrow_OFF}. For non-suppressive
+  units it is the positive increase above \code{Baseline_Rate}; for
+  \code{Suppressed_By_Contrast} units it is the positive decrease below
+  \code{Baseline_Rate}.}
+
+  \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference index
+  computed from baseline-subtracted ON- and OFF-aligned response traces of
+  length \code{step_offset - step_onset}, following Liang et al.
+  (2018). For units classified as \code{Suppressed_By_Contrast}, positive
+  rebound components are set to zero before computing the index. No
+  additional sign inversion is applied, so suppression during an ON step
+  remains OFF-labeled.}
 }
 
 If \code{return_psth = TRUE}, the low-level function
-\code{\link{step_stim_resp_metrics}} additionally returns the PSTH used for
-the transience calculation as a small \code{data.frame}; when called through
-\code{StepStimMetrics()}, this object is carried along inside the intermediate
-list output but is typically not useful for averaging across runs.
+\code{\link{step_stim_resp_metrics}} additionally returns the peak-normalized
+binned response trace used for the transience calculation as a small
+\code{data.frame}. In the high-level output this is retained only in the
+non-averaged case and is omitted when averaging across \code{RecordingID}.
 }
 \section{Low-level functions on this page}{
 
@@ -250,6 +306,7 @@ list output but is typically not useful for averaging across runs.
 #   latency_alpha = 0.05
 # )
 
+
 }
 \references{
 Farrow K, Masland RH
@@ -257,6 +314,11 @@ Farrow K, Masland RH
 
 Shinomoto S, Shima K, Tanji J. Differences in spiking patterns among cortical
 neurons. \emph{Biosystems}. 2005;79(1-3):57-65.
+
+Liang L, Fratzl A, Goldey GJ, Ramesh RN, Sugden AU, Morgan JL, Chen C,
+Andermann ML. A Fine-Scale Functional Logic to Convergence from Retina to
+Thalamus. \emph{Cell}. 2018;173(6):1343-1355.e24.
+doi:10.1016/j.cell.2018.04.041
 }
 \seealso{
 \code{\link{step_stim_resp_metrics}},
