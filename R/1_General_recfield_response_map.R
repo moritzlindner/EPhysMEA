@@ -1,8 +1,7 @@
 #' Receptive-field response map (mean Response_Amplitude per pixel)
 #'
-#' Builds a 2-D receptive-field map for a single channel by averaging
-#' \code{Response_Amplitude} (from \code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}})
-#' over all frames in which each pixel was stimulated.
+#' Builds a 2-D receptive-field map for a single channel by averaging a
+#' frame-wise response scalar over all frames in which each pixel was stimulated.
 #'
 #' @description
 #' The stimulus sequence is provided as:
@@ -10,39 +9,72 @@
 #'   \item \code{StimSeq[,,i]} — the spatial mask (binary/weight) for frame \eqn{i}.
 #'   \item \code{change_times[i]} — the onset time (s) of frame \eqn{i}.
 #' }
-#' Each frame \eqn{i} is assumed to be shown \emph{until} \code{change_times[i+1]}
-#' (the next onset). If \code{length(change_times) == dim(StimSeq)[3]}, the last
-#' frame's offset is inferred as \code{change_times[n] + median(diff(change_times))}.
+#' Each frame \eqn{i} is assumed to be shown until \code{change_times[i+1]}.
 #'
-#' For each frame, a scalar \emph{Response_Amplitude} is computed and assigned to
-#' all pixels where \code{StimSeq[,,i] != 0}. If a pixel is stimulated multiple
-#' times, values are averaged. Pixels never stimulated are returned as \code{NA}.
+#' If a fixed response profile is available, frame-wise
+#' \code{Response_Amplitude} is computed from
+#' \code{\link{step_stim_response_auc_components}} and
+#' \code{\link{step_stim_response_amplitude}} using that profile. The rule used
+#' to choose the relevant response component is then fixed across all frames of
+#' the map.
+#'
+#' If \code{profile_win}, \code{profile_polarity}, and \code{profile_bias} are
+#' all \code{NULL}, a simpler fallback is used: each frame is scored by the raw
+#' spike count in \code{[step_onset, step_offset + off_win)}.
 #'
 #' @param spike_times Numeric vector of spike times (seconds), aligned so
 #'   \code{t = 0} corresponds to the start of \code{StimSeq}. Can be unsorted.
 #' @param StimSeq Numeric/integer/logical 3D array \code{[nrow, ncol, nframes]}.
 #'   Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
 #'   (nonzero values are treated as ON/weights).
-#' @param change_times Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.
-#' @param baserate_win Optional numeric scalar (s). If supplied, the baseline
-#'   rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
-#'   and used for all frames.
-#' @param ... Additional arguments passed to
-#'   \code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}} (e.g., \code{trans_win},
-#'   \code{binwidth}, \code{smooth}, \code{latency_*}).
+#' @param change_times Numeric vector of frame onset/offset times (s);
+#'   length \code{nframes+1}, with the last value marking the offset of the last
+#'   frame. Offsets of all previous frames are assumed to be the onset of the
+#'   subsequent frame.
+#' @param baserate_win Obsolete. Ignored. Baseline correction is handled
+#'   internally by the StepStimResponseProfile low-level helpers when a fixed
+#'   profile is used.
+#' @param profile_win Optional numeric or \code{units} length-2 vector defining
+#'   a reference stimulus step \code{c(start, end)} from which
+#'   \code{profile_polarity} and \code{profile_bias} are inferred once for this
+#'   spike train. It is converted with \code{to_num()} and must lie fully
+#'   outside the interval covered by \code{change_times}.
+#' @param profile_polarity Optional scalar character string giving the fixed
+#'   polarity decision used for all frames. Must be one of
+#'   \code{"positive"}, \code{"negative"}, or \code{"ambiguous"}.
+#'   Used only if \code{profile_win} is \code{NULL}.
+#' @param profile_bias Optional scalar character string giving the fixed bias
+#'   decision used for all frames. Must be one of \code{"onset"},
+#'   \code{"offset"}, or \code{"ambiguous"}. Used only if \code{profile_win} is
+#'   \code{NULL}.
+#' @param ... Additional arguments forwarded to
+#'   \code{\link{step_stim_response_auc_components}} and, when
+#'   \code{profile_win} is supplied, to \code{\link{step_stim_response_polarity_bias}}.
+#'   Typical examples are \code{on_win}, \code{off_win}, \code{baseline_win},
+#'   \code{binwidth}, \code{smooth}, and \code{gauss_sd}. In the fallback mode
+#'   where \code{profile_win}, \code{profile_polarity}, and \code{profile_bias}
+#'   are all \code{NULL}, only \code{off_win} is used, defaulting to
+#'   \code{0.4}.
 #'
-#' @return A numeric matrix \code{[nrow, ncol]} with the \emph{mean}
-#'   \code{Response_Amplitude} per pixel. Pixels never stimulated are \code{NA}.
+#' @return A numeric matrix \code{[nrow, ncol]} with the mean frame-wise response
+#'   per pixel. Pixels never stimulated are \code{NA}.
+#'
 #' @importFrom stats median
 #' @examples
 #' \donttest{
 #' # 4x4 grid, 8 frames, one pixel per frame, 0.2 s per frame
 #' StimSeq <- array(0L, dim = c(4,4,8))
 #' for (i in 1:8) StimSeq[((i-1) %% 4) + 1, ((i-1) %/% 4) + 1, i] <- 1L
-#' change_times <- seq(0, by = 0.2, length.out = 8)  # onsets; last offset inferred
+#' change_times <- seq(0, by = 0.2, length.out = 9)
 #' spikes <- c(0.05, 0.07, 0.22, 0.28, 0.43, 0.51, 0.71)
-#' resp_map <- recfield_response_map(spikes, StimSeq, change_times,
-#'                                   trans_win = 1.0, binwidth = 0.02)
+#'
+#' # explicit fixed profile decisions
+#' resp_map <- recfield_response_map(
+#'   spikes, StimSeq, change_times,
+#'   profile_polarity = "positive",
+#'   profile_bias = "onset",
+#'   binwidth = 0.02
+#' )
 #' image(resp_map, main = "Mean Response_Amplitude")
 #' }
 #'
@@ -52,38 +84,124 @@ recfield_response_map <- function(
     StimSeq,
     change_times,
     baserate_win = NULL,
+    profile_win = NULL,
+    profile_polarity = NULL,
+    profile_bias = NULL,
     ...
 ) {
+  # ---- helpers ----
+  select_dots <- function(fun, dots) {
+    nms <- intersect(names(dots), names(formals(fun)))
+    dots[nms]
+  }
+
+  resolve_profile_from_step <- function(x, profile_win, dots) {
+    ref_args <- c(
+      list(
+        x = x,
+        step_onset = profile_win[1],
+        step_offset = profile_win[2]
+      ),
+      select_dots(step_stim_response_polarity_bias, dots)
+    )
+    ref <- do.call(step_stim_response_polarity_bias, ref_args)
+
+    pol <- if (!is.finite(ref$PolarityIndex) || ref$PolarityIndex == 0) {
+      "ambiguous"
+    } else if (ref$PolarityIndex > 0) {
+      "positive"
+    } else {
+      "negative"
+    }
+
+    bias <- if (!is.finite(ref$BiasIndex) || ref$BiasIndex == 0) {
+      "ambiguous"
+    } else if (ref$BiasIndex > 0) {
+      "onset"
+    } else {
+      "offset"
+    }
+
+    list(profile_polarity = pol, profile_bias = bias)
+  }
+
   # ---- Validate StimSeq ----
-  if (length(dim(StimSeq)) != 3L) stop("StimSeq must be a 3D array [rows × cols × frames].")
+  if (length(dim(StimSeq)) != 3L) {
+    stop("StimSeq must be a 3D array [rows × cols × frames].")
+  }
   dims <- dim(StimSeq)
-  nrow <- dims[1]; ncol <- dims[2]; nframes <- dims[3]
-  change_times<-to_num(change_times)
-  baserate_win<-to_num(baserate_win)
+  nrow <- dims[1]
+  ncol <- dims[2]
+  nframes <- dims[3]
+
+  change_times <- to_num(change_times)
+  baserate_win <- to_num(baserate_win)
+  profile_win <- to_num(profile_win)
+
+  dots <- list(...)
 
   # ---- Validate change_times and build offsets ----
   if (!is.numeric(change_times) || !length(change_times)) {
-    stop("'change_times' must be a numeric vector of onsets (seconds).")
+    stop("'change_times' must be a numeric vector of frame times (seconds).")
   }
-  if (length(change_times) < nframes+1) {
+  if (length(change_times) < nframes + 1L) {
     stop("length(change_times) must be nframes+1 (got ", length(change_times), ").")
   }
+
   step_onsets <- as.numeric(change_times[seq_len(nframes)])
   step_offsets <- as.numeric(change_times[seq_len(nframes) + 1L])
-
-
 
   # Normalize and sort spikes once
   x <- sort(as.numeric(spike_times))
   x <- x[is.finite(x)]
 
-  # ---- Optional global baseline rate (before first onset) ----
-  global_base_rate <- 0
+  dots <- list(...)
+  off_win_fallback <- if ("off_win" %in% names(dots)) dots$off_win else 0.4
+  off_win_fallback <- to_num(off_win_fallback)
+
+  # ---- Profile resolution ----
+  use_fallback_counts <- FALSE
+
+  if (is.null(profile_win) && is.null(profile_polarity) && is.null(profile_bias)) {
+    use_fallback_counts <- TRUE
+  } else {
+    if (!is.null(profile_win) && ( !is.null(profile_polarity) || !is.null(profile_bias) )) {
+      stop("Provide either 'profile_win' or explicit 'profile_polarity'/'profile_bias', not both.")
+    }
+
+    if (!is.null(profile_win)) {
+      if (!is.numeric(profile_win) || length(profile_win) != 2L || any(!is.finite(profile_win))) {
+        stop("'profile_win' must be a finite numeric (or units) length-2 vector.")
+      }
+      profile_win <- sort(profile_win)
+      if (!(profile_win[2] > profile_win[1])) {
+        stop("'profile_win' must satisfy start < end.")
+      }
+      if (!(profile_win[2] <= min(change_times) || profile_win[1] >= max(change_times))) {
+        stop("'profile_win' must lie fully outside the time interval covered by 'change_times'.")
+      }
+
+      prof <- resolve_profile_from_step(x, profile_win, dots)
+      profile_polarity <- prof$profile_polarity
+      profile_bias <- prof$profile_bias
+    } else {
+      if (!is.character(profile_polarity) || length(profile_polarity) != 1L ||
+          !(profile_polarity %in% c("positive", "negative", "ambiguous"))) {
+        stop("'profile_polarity' must be one of: 'positive', 'negative', 'ambiguous'.")
+      }
+      if (!is.character(profile_bias) || length(profile_bias) != 1L ||
+          !(profile_bias %in% c("onset", "offset", "ambiguous"))) {
+        stop("'profile_bias' must be one of: 'onset', 'offset', 'ambiguous'.")
+      }
+    }
+  }
+
   if (!is.null(baserate_win)) {
-    stopifnot(is.numeric(baserate_win), length(baserate_win) == 1L, is.finite(baserate_win), baserate_win > 0)
-    t0 <- step_onsets[1]
-    base_times <- x[x >= (t0 - baserate_win) & x < t0]
-    global_base_rate <- step_spikerate(base_times,baserate_win)  # spikes/s
+    warning(
+      "'baserate_win' is obsolete in recfield_response_map() and is ignored; ",
+      "baseline correction is handled internally when a fixed profile is used.",
+      call. = FALSE
+    )
   }
 
   # ---- Preallocate accumulators (sum & count for internal mean) ----
@@ -92,36 +210,44 @@ recfield_response_map <- function(
 
   # ---- Main loop ----
   for (i in seq_len(nframes)) {
-    m <- step_stim_resp_metrics(
-      x,
-      step_onset  = step_onsets[i],
-      step_offset = step_offsets[i],
-      latency_alpha = NA,
-      shinomoto_win = NA,
-      binwidth = NA,
-      ...
-    )
-    rate_trans <- m$Response_Amplitude
-    amp <- rate_trans - global_base_rate
+    if (use_fallback_counts) {
+      amp <- count_in(x, step_onsets[i], step_offsets[i] + off_win_fallback)
+    } else {
+      auc_args <- c(
+        list(
+          x = x,
+          step_onset = step_onsets[i],
+          step_offset = step_offsets[i]
+        ),
+        select_dots(step_stim_response_auc_components, dots)
+      )
+      m_auc <- do.call(step_stim_response_auc_components, auc_args)
+
+      amp <- step_stim_response_amplitude(
+        on_auc_pos = m_auc$On_AUC_Pos,
+        on_auc_neg = m_auc$On_AUC_Neg,
+        off_auc_pos = m_auc$Off_AUC_Pos,
+        on_win = if ("on_win" %in% names(auc_args)) auc_args$on_win else 0.4,
+        off_win = if ("off_win" %in% names(auc_args)) auc_args$off_win else if ("on_win" %in% names(auc_args)) auc_args$on_win else 0.4,
+        profile_polarity = profile_polarity,
+        profile_bias = profile_bias
+      )$Response_Amplitude
+    }
 
     if (!is.finite(amp)) amp <- 0
 
     mask <- StimSeq[,,i]
-    if (!is.null(dim(mask))) {
-      nz <- (mask != 0)
-      if (any(nz, na.rm = TRUE)) {
-        sum_map[nz]   <- sum_map[nz]   + amp * mask[nz]
-        count_map[nz] <- count_map[nz] + 1L
-      }
+    nz <- (mask != 0)
+    if (any(nz, na.rm = TRUE)) {
+      sum_map[nz]   <- sum_map[nz]   + amp * mask[nz]
+      count_map[nz] <- count_map[nz] + 1L
     }
   }
+
   # ---- Compute mean per pixel; never-stimulated pixels -> NA ----
   response_map <- matrix(NA_real_, nrow = nrow, ncol = ncol)
   idx <- count_map > 0L
-  peak<-max(sum_map)
-  # if(is.na(peak)) peak <- 1
-  # if(peak==0) peak <- 1
-  response_map[idx] <- sum_map[idx] / count_map[idx] #peak
+  response_map[idx] <- sum_map[idx] / count_map[idx]
   response_map
 }
 

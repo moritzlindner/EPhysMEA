@@ -29,7 +29,7 @@ step_stim_resp_metrics(
   step_onset,
   step_offset,
   on_win = 0.4,
-  off_win = 0.4,
+  off_win = on_win,
   trans_win = 1,
   binwidth = 0.02,
   smooth = FALSE,
@@ -39,6 +39,7 @@ step_stim_resp_metrics(
   latency_preduration = 0.5,
   latency_postduration = NULL,
   latency_event = c("auto", "onset", "offset"),
+  latency_direction = c("auto", "decrease", "increase"),
   shinomoto_win = 2
 )
 
@@ -49,7 +50,8 @@ step_response_latency(
   event,
   latency_alpha,
   latency_preduration,
-  latency_postduration
+  latency_postduration,
+  latency_direction = c("decrease", "increase")
 )
 }
 \arguments{
@@ -85,19 +87,21 @@ analysis window.}
 \item{step_offset}{Numeric or \code{units} scalar giving step offset time.}
 
 \item{on_win}{Length of the short ON counting window used for
-\code{Farrow_ON} and for the short-window component of
+\code{Farrow_ON}, \code{Suppressed_By_Contrast}, and the ON component of
 \code{Response_Amplitude}. Default: \code{0.4}.}
 
 \item{off_win}{Length of the short OFF counting window used for
-\code{Farrow_OFF} and for the short-window component of
-\code{Response_Amplitude}. Default: \code{0.4}.}
+\code{Farrow_OFF} and the OFF component of \code{Response_Amplitude}.
+Default: \code{on_win}.}
 
 \item{trans_win}{Length of the response window used for the transience
 calculation and the optional returned PSTH. Default: \code{1.0}.}
 
-\item{binwidth}{PSTH bin width used for transience, suppressive-response
-classification, and \code{Liang_OnOff_PreferenceIndex}. Default:
-\code{0.02}. Set to \code{NA} to skip binned-trace based quantities.}
+\item{binwidth}{PSTH bin width used for transience, mean-rate estimation when
+finite, suppressive-response classification, and
+\code{Liang_OnOff_PreferenceIndex}. Default: \code{0.02}. Set to
+\code{NA} to skip binned-trace based quantities and to compute mean rates
+directly from spike counts divided by window length.}
 
 \item{smooth}{Logical; if \code{TRUE}, smooth binned response traces with a
 Gaussian kernel before downstream calculations.}
@@ -109,8 +113,8 @@ Default: \code{0.02}.}
 used for the transience calculation in the returned list. Requires finite
 \code{binwidth}.}
 
-\item{latency_alpha}{Quantile used to define the low-ISI threshold for the
-latency detector. Set to \code{NA} to skip latency calculation.}
+\item{latency_alpha}{Quantile used to define the baseline ISI threshold for
+the latency detector. Set to \code{NA} to skip latency calculation.}
 
 \item{latency_preduration}{Duration of the pre-event window used to obtain
 baseline ISIs for the latency detector.}
@@ -120,7 +124,13 @@ the latency detector. If \code{NULL}, defaults to \code{trans_win}.}
 
 \item{latency_event}{Character string; one of \code{"auto"},
 \code{"onset"}, or \code{"offset"}. In \code{"auto"} mode, onset is used
-when \code{Farrow_BiasIndex > 0}, otherwise offset.}
+for units classified as \code{Suppressed_By_Contrast}; otherwise onset is
+used when \code{Farrow_BiasIndex > 0} and offset otherwise.}
+
+\item{latency_direction}{For \code{step_response_latency()}, whether latency is
+defined by the first post-event ISI that is significantly shorter
+(\code{"decrease"}) or significantly longer (\code{"increase"}) than the
+baseline ISIs.}
 
 \item{shinomoto_win}{Length of the baseline window before step onset used for
 \code{Baseline_Rate} and \code{Shinomoto_Baseline_LV}. Set to \code{NA} to
@@ -148,24 +158,40 @@ For \code{step_stim_resp_metrics()}, a named list with elements
     \item{\code{Farrow_ON}}{Spike rate in the short ON window.}
     \item{\code{Farrow_OFF}}{Spike rate in the short OFF window.}
     \item{\code{Farrow_BiasIndex}}{Short-window ON/OFF bias index.}
+    \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference
+      index computed from baseline-subtracted ON- and OFF-aligned response
+      traces from the same time windows as the Farrow indices, or
+      \code{NA} if unavailable. For units classified as
+      \code{Suppressed_By_Contrast}, positive rebound components are set to
+      zero before the index is computed.}
     \item{\code{Farrow_TransienceIndex}}{Peak-normalized transience index
       from the selected response trace.}
     \item{\code{ISIdrop_Latency}}{Latency estimate from
-      \code{\link{step_response_latency}} or \code{NA}.}
-    \item{\code{Response_Amplitude}}{Non-negative response modulation
-      magnitude relative to baseline, with suppressive responses treated as
-      positive amplitudes.}
+      \code{\link{step_response_latency}} or \code{NA}. For ordinary positive
+      responses this is based on the first sufficiently short post-event ISI;
+      for suppressive responses in \code{latency_direction = "auto"} it is
+      based on the first sufficiently long post-event ISI.}
+    \item{\code{Response_Amplitude}}{Response modulation magnitude relative
+      to baseline. For units classified as \code{Suppressed_By_Contrast}, it
+      is computed as the mean suppressive depth in the ON window
+      (\code{on_neg_auc / on_win}). For non-suppressive units, it is the
+      larger of \code{Farrow_ON - Baseline_Rate} and
+      \code{Farrow_OFF - Baseline_Rate}. If both of these are negative,
+      \code{NA} is returned.}
     \item{\code{Baseline_Rate}}{Baseline spike rate before step onset or
-      \code{NA}.}
+      \code{NA}. When \code{binwidth} is finite, this is computed as the
+      area under the unsmoothed binned rate trace divided by window length;
+      otherwise it is computed directly from spike count divided by window
+      length.}
     \item{\code{Shinomoto_Baseline_LV}}{Shinomoto local variation of the
       baseline spike train or \code{NA}.}
     \item{\code{Mean_Step_Rate}}{Mean spike rate during the full step
       interval \code{[step_onset, step_offset)}.}
     \item{\code{Suppressed_By_Contrast}}{Logical flag indicating whether the
-      baseline-subtracted step response is classified as suppressive.}
-    \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference
-      index computed from baseline-subtracted ON- and OFF-aligned response
-      traces, or \code{NA} if unavailable.}
+      baseline-subtracted ON-aligned short response window is classified as
+      suppressive, requiring a negative mean response, larger negative than
+      positive area within the ON window, and larger negative ON area than
+      positive OFF rebound area.}
     \item{\code{psth}}{Optional data.frame with columns \code{t_left},
       \code{t_right}, and \code{rate}, giving the peak-normalized PSTH used
       for \code{Farrow_TransienceIndex}. Returned only if
@@ -176,8 +202,8 @@ For \code{step_spikerate()}, a numeric scalar giving mean spike rate
   in spikes/s, or \code{NA_real_} if the window duration is invalid.
 
 For \code{step_response_latency()}, the latency in seconds to the
-  second spike of the first post-event ISI that falls below the threshold
-  derived from pre-event ISIs, or \code{NA_real_} if no such event is found.
+  second spike of the first post-event ISI that satisfies the requested
+  direction criterion, or \code{NA_real_} if no such event is found.
 }
 \description{
 Compute step-response metrics for each \strong{run × channel} in an
@@ -271,9 +297,9 @@ analysis window starts at \code{step_onset}. Otherwise it starts at
   computed from baseline-subtracted ON- and OFF-aligned response traces of
   length \code{step_offset - step_onset}, following Liang et al.
   (2018). For units classified as \code{Suppressed_By_Contrast}, positive
-  rebound components are set to zero before computing the index. No
-  additional sign inversion is applied, so suppression during an ON step
-  remains OFF-labeled.}
+  rebound components are set to zero before computing the index. An
+  additional post-hoc sign inversion is then applied for these units so that
+  suppression during an ON step yields a negative, OFF-labeled value}
 }
 
 If \code{return_psth = TRUE}, the low-level function
@@ -309,11 +335,13 @@ non-averaged case and is omitted when averaging across \code{RecordingID}.
 
 }
 \references{
-Farrow K, Masland RH
-(2011) Physiological clustering of visual channels in the mouse retina. \emph{ J Neurophysiol}. 2011;105(4):1516-30.
+Farrow K, Masland RH.
+Physiological clustering of visual channels in the mouse retina.
+\emph{J Neurophysiol}. 2011;105(4):1516-1530.
 
-Shinomoto S, Shima K, Tanji J. Differences in spiking patterns among cortical
-neurons. \emph{Biosystems}. 2005;79(1-3):57-65.
+Shinomoto S, Shima K, Tanji J.
+Differences in spiking patterns among cortical neurons.
+\emph{Biosystems}. 2005;79(1-3):57-65.
 
 Liang L, Fratzl A, Goldey GJ, Ramesh RN, Sugden AU, Morgan JL, Chen C,
 Andermann ML. A Fine-Scale Functional Logic to Convergence from Retina to

@@ -3,41 +3,84 @@
 #' @description
 #' For each run (row of \code{Metadata}) and each channel, this method:
 #' \enumerate{
-#'   \item builds a receptive-field map with \code{\link{recfield_response_map}}
-#'         (signed \eqn{\Delta}rate per pixel, averaged over exposures), and
+#'   \item builds a receptive-field map with \code{\link{recfield_response_map}}, and
 #'   \item extracts peak/radius anisotropy metrics with \code{\link{recfield_r50_radial}}.
 #' }
-#' It returns two tidy data.frames: a long-form stack of RF maps and a per-(Run,Channel)
-#' table of r50 metrics.
+#' It returns either a per-(Run,Channel) table of r50 metrics or, if
+#' \code{ReturnMap = TRUE}, additionally a long-form stack of RF maps.
 #'
-#' @param X An \code{EPhysEvents} X.
+#' A fixed response profile can be supplied in one of two ways. This profile is
+#' used to determine which response component contributes to the frame-wise
+#' \code{Response_Amplitude} values from which the receptive-field map is built:
+#' positive onset responses, positive offset responses, or suppressive onset
+#' responses.
+#' \enumerate{
+#'   \item by \code{profile_win}, a single reference step interval used to infer
+#'   \code{profile_polarity} and \code{profile_bias} separately for each channel;
+#'   \item by explicit vectors \code{profile_polarity} and \code{profile_bias},
+#'   each of length \code{length(Channels(X))}, giving one fixed profile
+#'   decision per channel.
+#' }
+#' The resolved per-channel values are passed to
+#' \code{\link{recfield_response_map}}.
+#'
+#' @param X An \code{EPhysEvents} instance.
 #' @inheritParams recfield_response_map
-#' @param pixel_width Numeric scalar (e.g., µm per pixel) for \code{recfield_r50_radial()}.
+#' @param pixel_width Numeric scalar (e.g., µm per pixel) for
+#'   \code{recfield_r50_radial()}.
+#' @param profile_win Optional numeric or \code{units} length-2 vector defining a
+#'   reference stimulus step from which \code{profile_polarity} and
+#'   \code{profile_bias} are inferred for each channel. It is converted with
+#'   \code{to_num()} and must lie fully outside the interval covered by
+#'   \code{change_times}.
+#' @param profile_polarity Optional character vector of length
+#'   \code{length(Channels(X))}, giving one fixed polarity decision per channel.
+#'   Entries must be one of \code{"positive"}, \code{"negative"}, or
+#'   \code{"ambiguous"}. Used only if \code{profile_win} is \code{NULL}.
+#' @param profile_bias Optional character vector of length
+#'   \code{length(Channels(X))}, giving one fixed bias decision per channel.
+#'   Entries must be one of \code{"onset"}, \code{"offset"}, or
+#'   \code{"ambiguous"}. Used only if \code{profile_win} is \code{NULL}.
 #' @param ReturnMap Logical; if \code{TRUE}, also returns the individual heatmaps.
 #' @inheritParams EPhysData::`lapply-EPhys`
 #' @param ... Additional arguments forwarded to \code{\link{recfield_response_map}}
-#'   (and ultimately to \code{\link{step_stim_resp_metrics}}), e.g. \code{trans_win},
-#'   \code{binwidth}, \code{smooth}, etc.
+#'   and hence to the relevant StepStimResponseProfile low-level helpers.
 #'
-#' @return A named list with:
+#' @return
+#' If \code{ReturnMap = FALSE}, a wide \code{data.frame} with one row per
+#' run × channel containing the receptive-field metrics.
+#'
+#' If \code{ReturnMap = TRUE}, a named list with:
 #' \describe{
-#'   \item{\code{maps}}{data.frame with columns \code{Run}, \code{Channel}, \code{x}, \code{y}, \code{value}.}
-#'   \item{\code{metrics}}{data.frame with columns \code{Run}, \code{Channel}, \code{peak_amp}, \code{r50},
-#'         \code{symmetry_ratio}, \code{peak_at_margin}.}
+#'   \item{\code{maps}}{data.frame with columns \code{RunUID},
+#'   \code{RecordingID}, \code{Channel}, \code{x}, \code{y}, \code{value}.}
+#'   \item{\code{metrics}}{data.frame with one row per run × channel and columns
+#'   including \code{peak_amp}, \code{r50}, \code{symmetry_ratio}, and
+#'   \code{peak_at_margin}.}
 #' }
+#'
 #' @importFrom cli cli_progress_done cli_progress_update cli_progress_bar
 #' @examples
 #' \donttest{
 #' # Assuming you already have: E (EPhysEvents), StimSeq, change_times
-#' res <- Recfield(E, StimSeq = StimSeq, change_times = change_times,
-#'                 pixel_width = 10, baserate_win = 1.0, trans_win = 0.4)
-#' head(res$maps)
-#' head(res$metrics)
+#' res <- Recfield(
+#'   E,
+#'   StimSeq = StimSeq,
+#'   change_times = change_times,
+#'   pixel_width = 10,
+#'   profile_polarity = rep("positive", length(Channels(E))),
+#'   profile_bias = rep("onset", length(Channels(E)))
+#' )
+#' head(res)
 #' }
 #'
 #' @export
 setGeneric("Recfield", function(X, StimSeq, change_times, pixel_width,
-                                baserate_win = NULL, ReturnMap = FALSE,
+                                baserate_win = NULL,
+                                profile_win = NULL,
+                                profile_polarity = NULL,
+                                profile_bias = NULL,
+                                ReturnMap = FALSE,
                                 parallel = parallel,
                                 error = c("stop", "warn")[1],
                                 progress = interactive(), ...) {
@@ -48,34 +91,90 @@ setGeneric("Recfield", function(X, StimSeq, change_times, pixel_width,
 #' @export
 setMethod("Recfield", signature(X = "EPhysEvents"),
           function(X, StimSeq, change_times, pixel_width,
-                   baserate_win = NULL, ReturnMap = FALSE,
+                   baserate_win = NULL,
+                   profile_win = NULL,
+                   profile_polarity = NULL,
+                   profile_bias = NULL,
+                   ReturnMap = FALSE,
                    parallel = parallel,
                    error = c("stop", "warn")[1],
                    progress = interactive(), ...) {
 
             # --- basic checks ---
-            if (length(dim(StimSeq)) != 3L) stop("StimSeq must be a 3D array [rows × cols × frames].")
-            if (!is.numeric(change_times) || length(change_times) == 0L) {
-              stop("'change_times' must be a numeric vector of onsets (seconds).")
+            if (length(dim(StimSeq)) != 3L) {
+              stop("StimSeq must be a 3D array [rows × cols × frames].")
             }
-            if (!is.numeric(pixel_width) || length(pixel_width) != 1L || !is.finite(pixel_width) || pixel_width <= 0) {
+            if (!is.numeric(change_times) || length(change_times) == 0L) {
+              stop("'change_times' must be a numeric vector of frame times (seconds).")
+            }
+            if (!is.numeric(pixel_width) || length(pixel_width) != 1L ||
+                !is.finite(pixel_width) || pixel_width <= 0) {
               stop("'pixel_width' must be a single positive number.")
             }
 
-            n_runs <- nrow(Metadata(X))
+            change_times <- to_num(change_times)
+            profile_win <- to_num(profile_win)
+
             channels <- Channels(X)
+
+            if (!is.null(profile_win) && (!is.null(profile_polarity) || !is.null(profile_bias))) {
+              stop("Provide either 'profile_win' or explicit 'profile_polarity'/'profile_bias', not both.")
+            }
+
+            if (!is.null(profile_win)) {
+              if (!is.numeric(profile_win) || length(profile_win) != 2L || any(!is.finite(profile_win))) {
+                stop("'profile_win' must be a finite numeric (or units) length-2 vector.")
+              }
+              profile_win <- sort(profile_win)
+              if (!(profile_win[2] > profile_win[1])) {
+                stop("'profile_win' must satisfy start < end.")
+              }
+              if (!(profile_win[2] <= min(change_times) || profile_win[1] >= max(change_times))) {
+                stop("'profile_win' must lie fully outside the time interval covered by 'change_times'.")
+              }
+            } else {
+              if (!is.null(profile_polarity)) {
+                if (!is.character(profile_polarity) || length(profile_polarity) != length(channels)) {
+                  stop("'profile_polarity' must be a character vector of length length(Channels(X)).")
+                }
+                if (!all(profile_polarity %in% c("positive", "negative", "ambiguous"))) {
+                  stop("Entries of 'profile_polarity' must be one of: 'positive', 'negative', 'ambiguous'.")
+                }
+                names(profile_polarity) <- channels
+              }
+
+              if (!is.null(profile_bias)) {
+                if (!is.character(profile_bias) || length(profile_bias) != length(channels)) {
+                  stop("'profile_bias' must be a character vector of length length(Channels(X)).")
+                }
+                if (!all(profile_bias %in% c("onset", "offset", "ambiguous"))) {
+                  stop("Entries of 'profile_bias' must be one of: 'onset', 'offset', 'ambiguous'.")
+                }
+                names(profile_bias) <- channels
+              }
+
+              if (xor(is.null(profile_polarity), is.null(profile_bias))) {
+                stop("Provide both 'profile_polarity' and 'profile_bias', or neither.")
+              }
+            }
 
             single_worker <- function(spikes,
                                       StimSeq,
                                       change_times,
                                       baserate_win,
+                                      profile_win,
+                                      profile_polarity,
+                                      profile_bias,
                                       ReturnMap,
                                       ...) {
               rf_map <- recfield_response_map(
-                spike_times  = spikes,
-                StimSeq      = StimSeq,
+                spike_times = spikes,
+                StimSeq = StimSeq,
                 change_times = change_times,
                 baserate_win = baserate_win,
+                profile_win = profile_win,
+                profile_polarity = profile_polarity,
+                profile_bias = profile_bias,
                 ...
               )
 
@@ -90,32 +189,87 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
                   value = as.vector(rf_map),
                   check.names = FALSE
                 )
-                return(list(r50=m,map=map_df))
+                return(list(r50 = m, map = map_df))
               } else {
                 return(m)
               }
             }
 
-            res_list<-lapply(
-              X,
-              single_worker,
-              StimSeq,
-              change_times,
-              baserate_win,
-              ReturnMap,
-              parallel = parallel,
-              error = error,
-              progress = progress
-            )
-            r50<-lapply(res_list, function(x){lapply(x, function(y){as.data.frame(y$r50)})})
-            r50<-nested2df(X,r50)
-            if(ReturnMap){
-              rf_map<-lapply(res_list, function(x){lapply(x, function(y){y$map})}) #as.data.frame(y$map)
-              rf_map<-nested_maps_to_df(X,rf_map)
-              return(list(maps    = rf_map,
-                          metrics = r50))
+            if (!is.null(profile_win)) {
+              res_list <- EPhysData::lapply(
+                X,
+                single_worker,
+                StimSeq,
+                change_times,
+                baserate_win,
+                profile_win,
+                NULL,
+                NULL,
+                ReturnMap,
+                parallel = parallel,
+                error = error,
+                progress = progress
+              )
+            } else if (!is.null(profile_polarity) && !is.null(profile_bias)) {
+              chan_pol <- as.list(profile_polarity[channels])
+              chan_bias <- as.list(profile_bias[channels])
+
+              res_list <- EPhysData::lapply(
+                X,
+                function(run_obj, ...) {
+                  run_res <- vector("list", length(run_obj))
+                  names(run_res) <- names(run_obj)
+
+                  for (j in seq_along(run_obj)) {
+                    nm <- names(run_obj)[j]
+                    run_res[[j]] <- single_worker(
+                      spikes = run_obj[[j]],
+                      StimSeq = StimSeq,
+                      change_times = change_times,
+                      baserate_win = baserate_win,
+                      profile_win = NULL,
+                      profile_polarity = chan_pol[[nm]],
+                      profile_bias = chan_bias[[nm]],
+                      ReturnMap = ReturnMap,
+                      ...
+                    )
+                  }
+                  run_res
+                },
+                parallel = parallel,
+                error = error,
+                progress = progress
+              )
             } else {
-              r50
+              res_list <- EPhysData::lapply(
+                X,
+                single_worker,
+                StimSeq,
+                change_times,
+                baserate_win,
+                NULL,
+                NULL,
+                NULL,
+                ReturnMap,
+                parallel = parallel,
+                error = error,
+                progress = progress
+              )
+            }
+
+            if (ReturnMap) {
+              r50 <- lapply(res_list, function(x) lapply(x, function(y) as.data.frame(y$r50)))
+              r50 <- nested2df(X, r50)
+
+              rf_map <- lapply(res_list, function(x) lapply(x, function(y) y$map))
+              rf_map <- nested_maps_to_df(X, rf_map)
+
+              return(list(
+                maps = rf_map,
+                metrics = r50
+              ))
+            } else {
+              nested2df(X, res_list)
             }
           })
 

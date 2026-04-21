@@ -9,6 +9,9 @@ recfield_response_map(
   StimSeq,
   change_times,
   baserate_win = NULL,
+  profile_win = NULL,
+  profile_polarity = NULL,
+  profile_bias = NULL,
   ...
 )
 }
@@ -20,19 +23,43 @@ recfield_response_map(
 Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
 (nonzero values are treated as ON/weights).}
 
-\item{change_times}{Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.}
+\item{change_times}{Numeric vector of frame onset/offset times (s);
+length \code{nframes+1}, with the last value marking the offset of the last
+frame. Offsets of all previous frames are assumed to be the onset of the
+subsequent frame.}
 
-\item{baserate_win}{Optional numeric scalar (s). If supplied, the baseline
-rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
-and used for all frames.}
+\item{baserate_win}{Obsolete. Ignored. Baseline correction is handled
+internally by the StepStimResponseProfile low-level helpers when a fixed
+profile is used.}
 
-\item{...}{Additional arguments passed to
-\code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}} (e.g., \code{trans_win},
-\code{binwidth}, \code{smooth}, \code{latency_*}).}
+\item{profile_win}{Optional numeric or \code{units} length-2 vector defining
+a reference stimulus step \code{c(start, end)} from which
+\code{profile_polarity} and \code{profile_bias} are inferred once for this
+spike train. It is converted with \code{to_num()} and must lie fully
+outside the interval covered by \code{change_times}.}
+
+\item{profile_polarity}{Optional scalar character string giving the fixed
+polarity decision used for all frames. Must be one of
+\code{"positive"}, \code{"negative"}, or \code{"ambiguous"}.
+Used only if \code{profile_win} is \code{NULL}.}
+
+\item{profile_bias}{Optional scalar character string giving the fixed bias
+decision used for all frames. Must be one of \code{"onset"},
+\code{"offset"}, or \code{"ambiguous"}. Used only if \code{profile_win} is
+\code{NULL}.}
+
+\item{...}{Additional arguments forwarded to
+\code{\link{step_stim_response_auc_components}} and, when
+\code{profile_win} is supplied, to \code{\link{step_stim_response_polarity_bias}}.
+Typical examples are \code{on_win}, \code{off_win}, \code{baseline_win},
+\code{binwidth}, \code{smooth}, and \code{gauss_sd}. In the fallback mode
+where \code{profile_win}, \code{profile_polarity}, and \code{profile_bias}
+are all \code{NULL}, only \code{off_win} is used, defaulting to
+\code{0.4}.}
 }
 \value{
-A numeric matrix \code{[nrow, ncol]} with the \emph{mean}
-  \code{Response_Amplitude} per pixel. Pixels never stimulated are \code{NA}.
+A numeric matrix \code{[nrow, ncol]} with the mean frame-wise response
+  per pixel. Pixels never stimulated are \code{NA}.
 }
 \description{
 The stimulus sequence is provided as:
@@ -40,28 +67,38 @@ The stimulus sequence is provided as:
   \item \code{StimSeq[,,i]} — the spatial mask (binary/weight) for frame \eqn{i}.
   \item \code{change_times[i]} — the onset time (s) of frame \eqn{i}.
 }
-Each frame \eqn{i} is assumed to be shown \emph{until} \code{change_times[i+1]}
-(the next onset). If \code{length(change_times) == dim(StimSeq)[3]}, the last
-frame's offset is inferred as \code{change_times[n] + median(diff(change_times))}.
+Each frame \eqn{i} is assumed to be shown until \code{change_times[i+1]}.
 
-For each frame, a scalar \emph{Response_Amplitude} is computed and assigned to
-all pixels where \code{StimSeq[,,i] != 0}. If a pixel is stimulated multiple
-times, values are averaged. Pixels never stimulated are returned as \code{NA}.
+If a fixed response profile is available, frame-wise
+\code{Response_Amplitude} is computed from
+\code{\link{step_stim_response_auc_components}} and
+\code{\link{step_stim_response_amplitude}} using that profile. The rule used
+to choose the relevant response component is then fixed across all frames of
+the map.
+
+If \code{profile_win}, \code{profile_polarity}, and \code{profile_bias} are
+all \code{NULL}, a simpler fallback is used: each frame is scored by the raw
+spike count in \code{[step_onset, step_offset + off_win)}.
 }
 \details{
-Builds a 2-D receptive-field map for a single channel by averaging
-\code{Response_Amplitude} (from \code{\link[=step_stim_resp_metrics]{step_stim_resp_metrics}})
-over all frames in which each pixel was stimulated.
+Builds a 2-D receptive-field map for a single channel by averaging a
+frame-wise response scalar over all frames in which each pixel was stimulated.
 }
 \examples{
 \donttest{
 # 4x4 grid, 8 frames, one pixel per frame, 0.2 s per frame
 StimSeq <- array(0L, dim = c(4,4,8))
 for (i in 1:8) StimSeq[((i-1) \%\% 4) + 1, ((i-1) \%/\% 4) + 1, i] <- 1L
-change_times <- seq(0, by = 0.2, length.out = 8)  # onsets; last offset inferred
+change_times <- seq(0, by = 0.2, length.out = 9)
 spikes <- c(0.05, 0.07, 0.22, 0.28, 0.43, 0.51, 0.71)
-resp_map <- recfield_response_map(spikes, StimSeq, change_times,
-                                  trans_win = 1.0, binwidth = 0.02)
+
+# explicit fixed profile decisions
+resp_map <- recfield_response_map(
+  spikes, StimSeq, change_times,
+  profile_polarity = "positive",
+  profile_bias = "onset",
+  binwidth = 0.02
+)
 image(resp_map, main = "Mean Response_Amplitude")
 }
 

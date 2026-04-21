@@ -108,9 +108,9 @@
 #'   computed from baseline-subtracted ON- and OFF-aligned response traces of
 #'   length \code{step_offset - step_onset}, following Liang et al.
 #'   (2018). For units classified as \code{Suppressed_By_Contrast}, positive
-#'   rebound components are set to zero before computing the index. No
-#'   additional sign inversion is applied, so suppression during an ON step
-#'   remains OFF-labeled.}
+#'   rebound components are set to zero before computing the index. An
+#'   additional post-hoc sign inversion is then applied for these units so that
+#'   suppression during an ON step yields a negative, OFF-labeled value}
 #' }
 #'
 #' If \code{return_psth = TRUE}, the low-level function
@@ -251,23 +251,24 @@ setMethod("StepStimMetrics", "EPhysEvents",
 )
 
 
-
 #' @rdname StepStimMetrics
 #'
 #' @param x Numeric vector of spike or event times for a single spike train.
 #' @param step_onset Numeric or \code{units} scalar giving step onset time.
 #' @param step_offset Numeric or \code{units} scalar giving step offset time.
 #' @param on_win Length of the short ON counting window used for
-#'   \code{Farrow_ON} and for the short-window component of
+#'   \code{Farrow_ON}, \code{Suppressed_By_Contrast}, and the ON component of
 #'   \code{Response_Amplitude}. Default: \code{0.4}.
 #' @param off_win Length of the short OFF counting window used for
-#'   \code{Farrow_OFF} and for the short-window component of
-#'   \code{Response_Amplitude}. Default: \code{0.4}.
+#'   \code{Farrow_OFF} and the OFF component of \code{Response_Amplitude}.
+#'   Default: \code{on_win}.
 #' @param trans_win Length of the response window used for the transience
 #'   calculation and the optional returned PSTH. Default: \code{1.0}.
-#' @param binwidth PSTH bin width used for transience, suppressive-response
-#'   classification, and \code{Liang_OnOff_PreferenceIndex}. Default:
-#'   \code{0.02}. Set to \code{NA} to skip binned-trace based quantities.
+#' @param binwidth PSTH bin width used for transience, mean-rate estimation when
+#'   finite, suppressive-response classification, and
+#'   \code{Liang_OnOff_PreferenceIndex}. Default: \code{0.02}. Set to
+#'   \code{NA} to skip binned-trace based quantities and to compute mean rates
+#'   directly from spike counts divided by window length.
 #' @param smooth Logical; if \code{TRUE}, smooth binned response traces with a
 #'   Gaussian kernel before downstream calculations.
 #' @param gauss_sd Standard deviation of the Gaussian smoothing kernel.
@@ -275,15 +276,23 @@ setMethod("StepStimMetrics", "EPhysEvents",
 #' @param return_psth Logical; if \code{TRUE}, include the peak-normalized PSTH
 #'   used for the transience calculation in the returned list. Requires finite
 #'   \code{binwidth}.
-#' @param latency_alpha Quantile used to define the low-ISI threshold for the
-#'   latency detector. Set to \code{NA} to skip latency calculation.
+#' @param latency_alpha Quantile used to define the baseline ISI threshold for
+#'   the latency detector. Set to \code{NA} to skip latency calculation.
 #' @param latency_preduration Duration of the pre-event window used to obtain
 #'   baseline ISIs for the latency detector.
 #' @param latency_postduration Duration of the post-event search window used by
 #'   the latency detector. If \code{NULL}, defaults to \code{trans_win}.
 #' @param latency_event Character string; one of \code{"auto"},
 #'   \code{"onset"}, or \code{"offset"}. In \code{"auto"} mode, onset is used
-#'   when \code{Farrow_BiasIndex > 0}, otherwise offset.
+#'   for units classified as \code{Suppressed_By_Contrast}; otherwise onset is
+#'   used when \code{Farrow_BiasIndex > 0} and offset otherwise.
+#' @param latency_direction Character string; one of \code{"auto"},
+#'   \code{"decrease"}, or \code{"increase"}. For \code{"decrease"}, latency is
+#'   defined by the first post-event ISI that becomes significantly shorter than
+#'   baseline. For \code{"increase"}, latency is defined by the first post-event
+#'   ISI that becomes significantly longer than baseline. In \code{"auto"} mode,
+#'   \code{"increase"} is used for units classified as
+#'   \code{Suppressed_By_Contrast} and \code{"decrease"} otherwise.
 #' @param shinomoto_win Length of the baseline window before step onset used for
 #'   \code{Baseline_Rate} and \code{Shinomoto_Baseline_LV}. Set to \code{NA} to
 #'   skip both quantities.
@@ -293,24 +302,40 @@ setMethod("StepStimMetrics", "EPhysEvents",
 #'     \item{\code{Farrow_ON}}{Spike rate in the short ON window.}
 #'     \item{\code{Farrow_OFF}}{Spike rate in the short OFF window.}
 #'     \item{\code{Farrow_BiasIndex}}{Short-window ON/OFF bias index.}
+#'     \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference
+#'       index computed from baseline-subtracted ON- and OFF-aligned response
+#'       traces from the same time windows as the Farrow indices, or
+#'       \code{NA} if unavailable. For units classified as
+#'       \code{Suppressed_By_Contrast}, positive rebound components are set to
+#'       zero before the index is computed.}
 #'     \item{\code{Farrow_TransienceIndex}}{Peak-normalized transience index
 #'       from the selected response trace.}
 #'     \item{\code{ISIdrop_Latency}}{Latency estimate from
-#'       \code{\link{step_response_latency}} or \code{NA}.}
-#'     \item{\code{Response_Amplitude}}{Non-negative response modulation
-#'       magnitude relative to baseline, with suppressive responses treated as
-#'       positive amplitudes.}
+#'       \code{\link{step_response_latency}} or \code{NA}. For ordinary positive
+#'       responses this is based on the first sufficiently short post-event ISI;
+#'       for suppressive responses in \code{latency_direction = "auto"} it is
+#'       based on the first sufficiently long post-event ISI.}
+#'     \item{\code{Response_Amplitude}}{Response modulation magnitude relative
+#'       to baseline. For units classified as \code{Suppressed_By_Contrast}, it
+#'       is computed as the mean suppressive depth in the ON window
+#'       (\code{on_neg_auc / on_win}). For non-suppressive units, it is the
+#'       larger of \code{Farrow_ON - Baseline_Rate} and
+#'       \code{Farrow_OFF - Baseline_Rate}. If both of these are negative,
+#'       \code{NA} is returned.}
 #'     \item{\code{Baseline_Rate}}{Baseline spike rate before step onset or
-#'       \code{NA}.}
+#'       \code{NA}. When \code{binwidth} is finite, this is computed as the
+#'       area under the unsmoothed binned rate trace divided by window length;
+#'       otherwise it is computed directly from spike count divided by window
+#'       length.}
 #'     \item{\code{Shinomoto_Baseline_LV}}{Shinomoto local variation of the
 #'       baseline spike train or \code{NA}.}
 #'     \item{\code{Mean_Step_Rate}}{Mean spike rate during the full step
 #'       interval \code{[step_onset, step_offset)}.}
 #'     \item{\code{Suppressed_By_Contrast}}{Logical flag indicating whether the
-#'       baseline-subtracted step response is classified as suppressive.}
-#'     \item{\code{Liang_OnOff_PreferenceIndex}}{Weighted ON/OFF preference
-#'       index computed from baseline-subtracted ON- and OFF-aligned response
-#'       traces, or \code{NA} if unavailable.}
+#'       baseline-subtracted ON-aligned short response window is classified as
+#'       suppressive, requiring a negative mean response, larger negative than
+#'       positive area within the ON window, and larger negative ON area than
+#'       positive OFF rebound area.}
 #'     \item{\code{psth}}{Optional data.frame with columns \code{t_left},
 #'       \code{t_right}, and \code{rate}, giving the peak-normalized PSTH used
 #'       for \code{Farrow_TransienceIndex}. Returned only if
@@ -318,11 +343,13 @@ setMethod("StepStimMetrics", "EPhysEvents",
 #'   }
 #'
 #' @references
-#' Farrow K, Masland RH
-#' (2011) Physiological clustering of visual channels in the mouse retina. \emph{ J Neurophysiol}. 2011;105(4):1516-30.
+#' Farrow K, Masland RH.
+#' Physiological clustering of visual channels in the mouse retina.
+#' \emph{J Neurophysiol}. 2011;105(4):1516-1530.
 #'
-#' Shinomoto S, Shima K, Tanji J. Differences in spiking patterns among cortical
-#' neurons. \emph{Biosystems}. 2005;79(1-3):57-65.
+#' Shinomoto S, Shima K, Tanji J.
+#' Differences in spiking patterns among cortical neurons.
+#' \emph{Biosystems}. 2005;79(1-3):57-65.
 #'
 #' Liang L, Fratzl A, Goldey GJ, Ramesh RN, Sugden AU, Morgan JL, Chen C,
 #' Andermann ML. A Fine-Scale Functional Logic to Convergence from Retina to
@@ -337,7 +364,7 @@ step_stim_resp_metrics <- function(x,
                                    step_onset,
                                    step_offset,
                                    on_win = 0.4,
-                                   off_win = 0.4,
+                                   off_win = on_win,
                                    trans_win = 1.0,
                                    binwidth = 0.02,
                                    smooth = FALSE,
@@ -347,12 +374,16 @@ step_stim_resp_metrics <- function(x,
                                    latency_preduration = 0.5,
                                    latency_postduration = NULL,
                                    latency_event = c("auto", "onset", "offset"),
+                                   latency_direction = c("auto", "decrease", "increase"),
                                    shinomoto_win = 2) {
+  warning("this function has been Superseeded. Use StepStimResponseProfile instead.")
   latency_event <- match.arg(latency_event)
+  latency_direction <- match.arg(latency_direction)
+
   if (is.null(latency_postduration))
     latency_postduration <- trans_win
 
-  x                    <- to_num(x)
+  x                    <- sort(to_num(x)[is.finite(to_num(x))])
   step_onset           <- to_num(step_onset)
   step_offset          <- to_num(step_offset)
   on_win               <- to_num(on_win)
@@ -377,87 +408,15 @@ step_stim_resp_metrics <- function(x,
     is.finite(step_offset - step_onset) && (step_offset - step_onset) > 0
   )
 
-  onoff_pref_win <- step_offset - step_onset
+  step_win <- step_offset - step_onset
 
-  # shared helper for binned/smoothed rate traces
-  make_rate_trace <- function(spk, t0, win, binwidth, smooth = FALSE, gauss_sd = 0.02) {
-    if (is.na(binwidth)) {
-      return(list(breaks = NULL, rate = NULL))
-    }
-    stopifnot(is.finite(win), win > 0, is.finite(binwidth), binwidth > 0)
+  Farrow_ON  <- window_mean_rate(x, step_onset,  on_win,  binwidth, gauss_sd)
+  Farrow_OFF <- window_mean_rate(x, step_offset, off_win, binwidth, gauss_sd)
 
-    t1 <- t0 + win
-
-    # restrict to the analysis window before calling hist()
-    spk <- spk[is.finite(spk) & spk >= t0 & spk < t1]
-
-    breaks <- seq(t0, t1, by = binwidth)
-    if (length(breaks) < 2L || tail(breaks, 1) < (t1 - 1e-12)) {
-      breaks <- c(breaks, t1)
-    }
-    breaks <- unique(breaks)
-
-    h <- hist(
-      spk,
-      breaks = breaks,
-      right = FALSE,
-      plot = FALSE,
-      include.lowest = TRUE
-    )
-    rate <- h$counts / diff(h$breaks)
-
-    if (smooth && length(rate)) {
-      k_idx  <- seq(-3 * gauss_sd, 3 * gauss_sd, by = binwidth)
-      kernel <- dnorm(k_idx, sd = gauss_sd)
-      kernel <- kernel / sum(kernel)
-
-      r_sm <- filter(rate, kernel, sides = 2, circular = FALSE)
-      if (anyNA(r_sm)) {
-        nz <- which(!is.na(r_sm))
-        if (length(nz)) {
-          left_gap  <- seq_len(min(nz) - 1L)
-          right_gap <- if (max(nz) < length(r_sm)) (max(nz) + 1L):length(r_sm) else integer(0)
-          if (length(left_gap))  r_sm[left_gap]  <- r_sm[min(nz)]
-          if (length(right_gap)) r_sm[right_gap] <- r_sm[max(nz)]
-        } else {
-          r_sm <- rate
-        }
-      }
-      rate <- as.numeric(r_sm)
-    }
-
-    list(breaks = h$breaks, rate = as.numeric(rate))
-  }
-
-  pre_keep <- max(
-    on_win,
-    latency_preduration,
-    if (is.na(shinomoto_win)) 0 else shinomoto_win
-  )
-  post_keep <- max(off_win, trans_win, latency_postduration, onoff_pref_win)
-
-  x <- x[x < step_offset + post_keep]
-  x <- x[x >= step_onset - pre_keep]
-  x <- sort(x[is.finite(x)])
-
-  # --- Farrow ON / OFF and Bias ---
-  Farrow_ON  <- count_in(x, step_onset,  step_onset  + on_win) / on_win
-  Farrow_OFF <- count_in(x, step_offset, step_offset + off_win) / off_win
   den <- Farrow_ON + Farrow_OFF
-  Farrow_BiasIndex <-
-    if (den > 0) {
-      (Farrow_ON - Farrow_OFF) / den
-    } else {
-      0
-    }
+  Farrow_BiasIndex <- if (den > 0) (Farrow_ON - Farrow_OFF) / den else 0
 
-  # --- Transience AUC over chosen window ---
-  trans_start <-
-    if (Farrow_BiasIndex > 0) {
-      step_onset
-    } else {
-      step_offset
-    }
+  trans_start <- if (Farrow_BiasIndex > 0) step_onset else step_offset
   trans_trace <- if (!is.na(binwidth)) {
     make_rate_trace(x, trans_start, trans_win, binwidth, smooth, gauss_sd)
   } else {
@@ -466,7 +425,6 @@ step_stim_resp_metrics <- function(x,
 
   if (!is.na(binwidth)) {
     rate <- trans_trace$rate
-
     mx <- suppressWarnings(max(rate, na.rm = TRUE))
     if (is.finite(mx) && mx > 0) {
       rate_norm <- rate / mx
@@ -474,43 +432,15 @@ step_stim_resp_metrics <- function(x,
       rate_norm <- rate
       rate_norm[] <- 0
     }
-
-    Farrow_TransienceIndex <- (sum(rate_norm, na.rm = TRUE) * binwidth) / trans_win
+    Farrow_TransienceIndex <- sum(rate_norm * diff(trans_trace$breaks), na.rm = TRUE) / trans_win
   } else {
-    rate <- NULL
+    rate_norm <- NULL
     Farrow_TransienceIndex <- NA_real_
   }
 
-  # --- Latency ---
-  if (!is.na(latency_alpha)) {
-    evt_for_latency <-
-      if (latency_event == "onset") {
-        step_onset
-      } else if (latency_event == "offset") {
-        step_offset
-      } else {
-        if (Farrow_BiasIndex > 0) step_onset else step_offset
-      }
-
-    if (!(latency_alpha > 0 && latency_alpha < 1)) {
-      stop("'latency_alpha' must be a numeric in the range of 0 to 1 or NA.")
-    }
-
-    ISIdrop_Latency <- step_response_latency(
-      x,
-      evt_for_latency,
-      latency_alpha,
-      latency_preduration,
-      latency_postduration
-    )
-  } else {
-    ISIdrop_Latency <- NA_real_
-  }
-
-  # --- Resting stability ---
   if (!is.na(shinomoto_win)) {
     base_times <- x[x >= (step_onset - shinomoto_win) & x < step_onset]
-    Baseline_Rate <- step_spikerate(base_times, shinomoto_win)
+    Baseline_Rate <- window_mean_rate(x, step_onset - shinomoto_win, shinomoto_win, binwidth, gauss_sd)
 
     if (length(base_times) == 0) {
       Shinomoto_Baseline_LV <- 1
@@ -523,28 +453,27 @@ step_stim_resp_metrics <- function(x,
     Shinomoto_Baseline_LV <- NA_real_
   }
 
-  # --- Weighted ON/OFF preference index ---
-  Mean_Step_Rate <- count_in(x, step_onset, step_offset) / onoff_pref_win
+  Mean_Step_Rate <- window_mean_rate(x, step_onset, step_win, binwidth, gauss_sd)
+
   Suppressed_By_Contrast <- NA
   OnOff_PreferenceIndex <- NA_real_
+  on_neg_auc <- NA_real_
 
   if (!is.na(binwidth) && !is.na(Baseline_Rate)) {
-    on_trace  <- make_rate_trace(x, step_onset,  onoff_pref_win, binwidth, smooth, gauss_sd)$rate
-    off_trace <- make_rate_trace(x, step_offset, onoff_pref_win, binwidth, smooth, gauss_sd)$rate
+    on_trace  <- make_rate_trace(x, step_onset,  on_win,  binwidth, smooth, gauss_sd)$rate - Baseline_Rate
+    off_trace <- make_rate_trace(x, step_offset, off_win, binwidth, smooth, gauss_sd)$rate - Baseline_Rate
 
-    on_trace  <- on_trace  - Baseline_Rate
-    off_trace <- off_trace - Baseline_Rate
+    on_neg_auc  <- sum(-pmin(on_trace,  0), na.rm = TRUE) * binwidth
+    on_pos_auc  <- sum( pmax(on_trace,  0), na.rm = TRUE) * binwidth
+    off_pos_auc <- sum( pmax(off_trace, 0), na.rm = TRUE) * binwidth
 
-    # simple SbC screen as discussed
-    step_win <- step_offset - step_onset
-    step_trace <- make_rate_trace(x, step_onset, step_win, binwidth, smooth, gauss_sd)$rate - Baseline_Rate
+# this is somewhat unstable between runs.
+# - how much does this reflect true noise? i know its more in unsignificant units
+# - explore on small dataset how the above metrics behave?
+    Suppressed_By_Contrast <-
+      (on_neg_auc > on_pos_auc) &&
+      (on_neg_auc > off_pos_auc)
 
-    neg_auc <- sum(-pmin(step_trace, 0), na.rm = TRUE) * binwidth
-    pos_auc <- sum( pmax(step_trace, 0), na.rm = TRUE) * binwidth
-
-    Suppressed_By_Contrast <- (mean(step_trace, na.rm = TRUE) < 0) && (neg_auc > pos_auc)
-
-    # for SbC units, discard positive rebound before computing the index
     if (isTRUE(Suppressed_By_Contrast)) {
       on_trace[on_trace > 0]   <- 0
       off_trace[off_trace > 0] <- 0
@@ -556,32 +485,71 @@ step_stim_resp_metrics <- function(x,
     if (is.finite(den_pref) && den_pref > 0) {
       OnOff_PreferenceIndex <-
         sum((on_trace - off_trace) * w, na.rm = TRUE) / den_pref
+
+      if (isTRUE(Suppressed_By_Contrast) && is.finite(OnOff_PreferenceIndex)) {
+        OnOff_PreferenceIndex <- -abs(OnOff_PreferenceIndex)
+      }
     }
   }
 
-  # --- Response amplitude ---
-  peak_step_rate <- max(Farrow_ON, Farrow_OFF, 0)
+  # Latency now uses suppressive classification when latency_direction = "auto"
+  if (!is.na(latency_alpha)) {
+    evt_for_latency <-
+      if (latency_event == "onset") { step_onset
+      } else if (latency_event == "offset") { step_offset
+      } else if (isTRUE(Suppressed_By_Contrast)) { step_onset
+      } else if (Farrow_BiasIndex > 0) { step_onset
+      } else { step_offset
+      }
+
+    dir_for_latency <-
+      if (latency_direction == "decrease") { "decrease"
+      } else if (latency_direction == "increase") { "increase"
+      } else if (isTRUE(Suppressed_By_Contrast)) { "increase"
+      } else {"decrease"
+      }
+
+    if (!(latency_alpha > 0 && latency_alpha < 1)) {
+      stop("'latency_alpha' must be a numeric in the range of 0 to 1 or NA.")
+    }
+
+    ISIdrop_Latency <- step_response_latency(
+      x,
+      evt_for_latency,
+      latency_alpha,
+      latency_preduration,
+      latency_postduration,
+      latency_direction = dir_for_latency
+    )
+  } else {
+    ISIdrop_Latency <- NA_real_
+  }
+
+  delta_on  <- Farrow_ON  - Baseline_Rate
+  delta_off <- Farrow_OFF - Baseline_Rate
 
   Response_Amplitude <- if (is.na(Baseline_Rate)) {
-    peak_step_rate
+    max(Farrow_ON, Farrow_OFF)
   } else if (isTRUE(Suppressed_By_Contrast)) {
-    max(Baseline_Rate - peak_step_rate, 0)
+    on_neg_auc / on_win
+  } else if (delta_on < 0 && delta_off < 0) {
+    NA_real_
   } else {
-    max(peak_step_rate - Baseline_Rate, 0)
+    max(delta_on, delta_off)
   }
 
   out <- list(
-    Farrow_ON               = as.numeric(Farrow_ON),
-    Farrow_OFF              = as.numeric(Farrow_OFF),
-    Farrow_BiasIndex        = as.numeric(Farrow_BiasIndex),
-    Farrow_TransienceIndex  = as.numeric(Farrow_TransienceIndex),
-    ISIdrop_Latency         = as.numeric(ISIdrop_Latency),
-    Response_Amplitude      = as.numeric(Response_Amplitude),
-    Baseline_Rate           = as.numeric(Baseline_Rate),
-    Shinomoto_Baseline_LV   = as.numeric(Shinomoto_Baseline_LV),
-    Mean_Step_Rate          = as.numeric(Mean_Step_Rate),
-    Suppressed_By_Contrast  = as.logical(Suppressed_By_Contrast),
-    Liang_OnOff_PreferenceIndex   = as.numeric(OnOff_PreferenceIndex)
+    Farrow_ON = as.numeric(Farrow_ON),
+    Farrow_OFF = as.numeric(Farrow_OFF),
+    Farrow_BiasIndex = as.numeric(Farrow_BiasIndex),
+    Farrow_TransienceIndex = as.numeric(Farrow_TransienceIndex),
+    ISIdrop_Latency = as.numeric(ISIdrop_Latency),
+    Response_Amplitude = as.numeric(Response_Amplitude),
+    Baseline_Rate = as.numeric(Baseline_Rate),
+    Shinomoto_Baseline_LV = as.numeric(Shinomoto_Baseline_LV),
+    Mean_Step_Rate = as.numeric(Mean_Step_Rate),
+    Suppressed_By_Contrast = as.logical(Suppressed_By_Contrast),
+    Liang_OnOff_PreferenceIndex = as.numeric(OnOff_PreferenceIndex)
   )
 
   if (isTRUE(return_psth)) {
@@ -627,16 +595,25 @@ step_spikerate <- function(x, t) {
 #' @rdname StepStimMetrics
 #'
 #' @param event for step_response_latency: Event time relative to which latency is measured.
+#' @param latency_direction For \code{step_response_latency()}, whether latency is
+#'   defined by the first post-event ISI that is significantly shorter
+#'   (\code{"decrease"}) or significantly longer (\code{"increase"}) than the
+#'   baseline ISIs.
 #'
 #' @return For \code{step_response_latency()}, the latency in seconds to the
-#'   second spike of the first post-event ISI that falls below the threshold
-#'   derived from pre-event ISIs, or \code{NA_real_} if no such event is found.
+#'   second spike of the first post-event ISI that satisfies the requested
+#'   direction criterion, or \code{NA_real_} if no such event is found.
 #' @export
 step_response_latency <- function(x,
                                   event,
                                   latency_alpha,
                                   latency_preduration,
-                                  latency_postduration) {
+                                  latency_postduration,
+                                  latency_direction = c("decrease", "increase")) {
+  latency_direction <- match.arg(latency_direction)
+
+  x <- sort(as.numeric(x[is.finite(x)]))
+
   # Pre-event baseline ISIs
   pre <- x[x >= (event - latency_preduration) & x < event]
   if (length(pre) >= 2L) {
@@ -646,29 +623,39 @@ step_response_latency <- function(x,
   } else {
     preISIs <- latency_preduration
   }
-  if (!length(preISIs) || !all(is.finite(preISIs)))
+
+  if (!length(preISIs) || !all(is.finite(preISIs))) {
     return(NA_real_)
+  }
+
+  low_q  <- as.numeric(quantile(preISIs, probs = latency_alpha, names = FALSE))
+  high_q <- as.numeric(quantile(preISIs, probs = 1 - latency_alpha, names = FALSE))
+  med    <- median(preISIs)
 
   # Threshold from baseline
-  low_q <-
-    as.numeric(quantile(preISIs, probs = latency_alpha, names = FALSE))
-  med   <- median(preISIs)
-  ISIthr <- max(low_q, 0.60 * med)
+  if (latency_direction == "decrease") {
+    ISIthr <- max(low_q, 0.60 * med)
+  } else {
+    ISIthr <- min(high_q, med / 0.60)
+  }
 
   # Post-event spikes, restricted to the horizon
   rel <- x[x >= event & x < (event + latency_postduration)] - event
 
   # Need at least two spikes within the window to form a post-event ISI
-  if (length(rel) < 2L)
+  if (length(rel) < 2L) {
     return(NA_real_)
+  }
 
   postISIs <- diff(rel)
-  idx <- which(postISIs < ISIthr)[1]
 
-  if (is.finite(idx))
-    rel[idx + 1]
-  else
-    NA_real_
+  idx <- if (latency_direction == "decrease") {
+    which(postISIs < ISIthr)[1]
+  } else {
+    which(postISIs > ISIthr)[1]
+  }
+
+  if (is.finite(idx)) rel[idx + 1] else NA_real_
 }
 
 
@@ -681,5 +668,110 @@ count_in <- function(x, a, b) {
   if (!length(x))
     return(0L)
   sum(x >= a & x < b)
+}
+
+#' Build a binned response-rate trace for a fixed analysis window
+#'
+#' Internal helper used by \code{\link{step_stim_resp_metrics}}.
+#'
+#' @param spk Numeric vector of spike times.
+#' @param t0 Window start time.
+#' @param win Window length.
+#' @param binwidth Bin width for the histogram-based rate trace. If \code{NA},
+#'   the helper returns \code{list(breaks = NULL, rate = NULL)}.
+#' @param smooth Logical; if \code{TRUE}, smooth the rate trace with a Gaussian
+#'   kernel.
+#' @param gauss_sd Standard deviation of the Gaussian smoothing kernel.
+#'
+#' @return A named list with elements:
+#' \describe{
+#'   \item{\code{breaks}}{Histogram breakpoints.}
+#'   \item{\code{rate}}{Binned spike rate in spikes/s.}
+#' }
+#'
+#' @keywords internal
+make_rate_trace <- function(spk, t0, win, binwidth, smooth = FALSE, gauss_sd = 0.02) {
+  if (is.na(binwidth)) {
+    return(list(breaks = NULL, rate = NULL))
+  }
+  stopifnot(is.finite(win), win > 0, is.finite(binwidth), binwidth > 0)
+
+  t1 <- t0 + win
+  spk <- spk[is.finite(spk) & spk >= t0 & spk < t1]
+
+  breaks <- seq(t0, t1, by = binwidth)
+  if (length(breaks) < 2L || tail(breaks, 1) < (t1 - 1e-12)) {
+    breaks <- c(breaks, t1)
+  }
+  breaks <- unique(breaks)
+
+  h <- hist(
+    spk,
+    breaks = breaks,
+    right = FALSE,
+    plot = FALSE,
+    include.lowest = TRUE
+  )
+  rate <- h$counts / diff(h$breaks)
+
+  if (smooth && length(rate)) {
+    k_idx  <- seq(-3 * gauss_sd, 3 * gauss_sd, by = binwidth)
+    kernel <- dnorm(k_idx, sd = gauss_sd)
+    kernel <- kernel / sum(kernel)
+
+    r_sm <- filter(rate, kernel, sides = 2, circular = FALSE)
+    if (anyNA(r_sm)) {
+      nz <- which(!is.na(r_sm))
+      if (length(nz)) {
+        left_gap  <- seq_len(min(nz) - 1L)
+        right_gap <- if (max(nz) < length(r_sm)) (max(nz) + 1L):length(r_sm) else integer(0)
+        if (length(left_gap))  r_sm[left_gap]  <- r_sm[min(nz)]
+        if (length(right_gap)) r_sm[right_gap] <- r_sm[max(nz)]
+      } else {
+        r_sm <- rate
+      }
+    }
+    rate <- as.numeric(r_sm)
+  }
+
+  list(breaks = h$breaks, rate = as.numeric(rate))
+}
+
+#' Compute mean spike rate in a fixed analysis window
+#'
+#' Internal helper used by \code{\link{step_stim_resp_metrics}}.
+#'
+#' @param spk Numeric vector of spike times.
+#' @param t0 Window start time.
+#' @param win Window length.
+#' @param binwidth Bin width for the optional histogram-based computation.
+#'   If \code{NA}, the rate is computed directly as count divided by window
+#'   length.
+#' @param gauss_sd Standard deviation of the Gaussian kernel. Included for
+#'   interface consistency with \code{make_rate_trace()}, but smoothing is
+#'   disabled internally for this mean-rate calculation.
+#'
+#' @return Numeric scalar giving mean spike rate in spikes/s.
+#'
+#' @keywords internal
+window_mean_rate <- function(spk, t0, win, binwidth, gauss_sd = 0.02) {
+  if (is.na(binwidth)) {
+    return(count_in(spk, t0, t0 + win) / win)
+  }
+
+  tr <- make_rate_trace(
+    spk = spk,
+    t0 = t0,
+    win = win,
+    binwidth = binwidth,
+    smooth = FALSE,
+    gauss_sd = gauss_sd
+  )
+
+  if (is.null(tr$rate) || !length(tr$rate)) {
+    return(0)
+  }
+
+  sum(tr$rate * diff(tr$breaks), na.rm = TRUE) / win
 }
 

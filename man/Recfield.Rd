@@ -11,6 +11,9 @@ Recfield(
   change_times,
   pixel_width,
   baserate_win = NULL,
+  profile_win = NULL,
+  profile_polarity = NULL,
+  profile_bias = NULL,
   ReturnMap = FALSE,
   parallel = parallel,
   error = c("stop", "warn")[1],
@@ -24,6 +27,9 @@ Recfield(
   change_times,
   pixel_width,
   baserate_win = NULL,
+  profile_win = NULL,
+  profile_polarity = NULL,
+  profile_bias = NULL,
   ReturnMap = FALSE,
   parallel = parallel,
   error = c("stop", "warn")[1],
@@ -32,19 +38,39 @@ Recfield(
 )
 }
 \arguments{
-\item{X}{An \code{EPhysEvents} X.}
+\item{X}{An \code{EPhysEvents} instance.}
 
 \item{StimSeq}{Numeric/integer/logical 3D array \code{[nrow, ncol, nframes]}.
 Each slice \code{StimSeq[,,i]} is the mask of pixels stimulated in frame \eqn{i}
 (nonzero values are treated as ON/weights).}
 
-\item{change_times}{Numeric vector of frame onset/offset times (s); length \code{nframes+1}, with the last value of change_times marking the offset of the last frame. Offset of all previous frames are assumed to be the onset of the subsequent.}
+\item{change_times}{Numeric vector of frame onset/offset times (s);
+length \code{nframes+1}, with the last value marking the offset of the last
+frame. Offsets of all previous frames are assumed to be the onset of the
+subsequent frame.}
 
-\item{pixel_width}{Numeric scalar (e.g., µm per pixel) for \code{recfield_r50_radial()}.}
+\item{pixel_width}{Numeric scalar (e.g., µm per pixel) for
+\code{recfield_r50_radial()}.}
 
-\item{baserate_win}{Optional numeric scalar (s). If supplied, the baseline
-rate is computed once over \code{[change_times[1] - baserate_win, change_times[1])}
-and used for all frames.}
+\item{baserate_win}{Obsolete. Ignored. Baseline correction is handled
+internally by the StepStimResponseProfile low-level helpers when a fixed
+profile is used.}
+
+\item{profile_win}{Optional numeric or \code{units} length-2 vector defining a
+reference stimulus step from which \code{profile_polarity} and
+\code{profile_bias} are inferred for each channel. It is converted with
+\code{to_num()} and must lie fully outside the interval covered by
+\code{change_times}.}
+
+\item{profile_polarity}{Optional character vector of length
+\code{length(Channels(X))}, giving one fixed polarity decision per channel.
+Entries must be one of \code{"positive"}, \code{"negative"}, or
+\code{"ambiguous"}. Used only if \code{profile_win} is \code{NULL}.}
+
+\item{profile_bias}{Optional character vector of length
+\code{length(Channels(X))}, giving one fixed bias decision per channel.
+Entries must be one of \code{"onset"}, \code{"offset"}, or
+\code{"ambiguous"}. Used only if \code{profile_win} is \code{NULL}.}
 
 \item{ReturnMap}{Logical; if \code{TRUE}, also returns the individual heatmaps.}
 
@@ -63,34 +89,57 @@ For \code{EPhysEvents} / \code{EPhysContinuous} methods only:
 show a \code{cli} progress bar in sequential mode.}
 
 \item{...}{Additional arguments forwarded to \code{\link{recfield_response_map}}
-(and ultimately to \code{\link{step_stim_resp_metrics}}), e.g. \code{trans_win},
-\code{binwidth}, \code{smooth}, etc.}
+and hence to the relevant StepStimResponseProfile low-level helpers.}
 }
 \value{
-A named list with:
+If \code{ReturnMap = FALSE}, a wide \code{data.frame} with one row per
+run × channel containing the receptive-field metrics.
+
+If \code{ReturnMap = TRUE}, a named list with:
 \describe{
-  \item{\code{maps}}{data.frame with columns \code{Run}, \code{Channel}, \code{x}, \code{y}, \code{value}.}
-  \item{\code{metrics}}{data.frame with columns \code{Run}, \code{Channel}, \code{peak_amp}, \code{r50},
-        \code{symmetry_ratio}, \code{peak_at_margin}.}
+  \item{\code{maps}}{data.frame with columns \code{RunUID},
+  \code{RecordingID}, \code{Channel}, \code{x}, \code{y}, \code{value}.}
+  \item{\code{metrics}}{data.frame with one row per run × channel and columns
+  including \code{peak_amp}, \code{r50}, \code{symmetry_ratio}, and
+  \code{peak_at_margin}.}
 }
 }
 \description{
 For each run (row of \code{Metadata}) and each channel, this method:
 \enumerate{
-  \item builds a receptive-field map with \code{\link{recfield_response_map}}
-        (signed \eqn{\Delta}rate per pixel, averaged over exposures), and
+  \item builds a receptive-field map with \code{\link{recfield_response_map}}, and
   \item extracts peak/radius anisotropy metrics with \code{\link{recfield_r50_radial}}.
 }
-It returns two tidy data.frames: a long-form stack of RF maps and a per-(Run,Channel)
-table of r50 metrics.
+It returns either a per-(Run,Channel) table of r50 metrics or, if
+\code{ReturnMap = TRUE}, additionally a long-form stack of RF maps.
+
+A fixed response profile can be supplied in one of two ways. This profile is
+used to determine which response component contributes to the frame-wise
+\code{Response_Amplitude} values from which the receptive-field map is built:
+positive onset responses, positive offset responses, or suppressive onset
+responses.
+\enumerate{
+  \item by \code{profile_win}, a single reference step interval used to infer
+  \code{profile_polarity} and \code{profile_bias} separately for each channel;
+  \item by explicit vectors \code{profile_polarity} and \code{profile_bias},
+  each of length \code{length(Channels(X))}, giving one fixed profile
+  decision per channel.
+}
+The resolved per-channel values are passed to
+\code{\link{recfield_response_map}}.
 }
 \examples{
 \donttest{
 # Assuming you already have: E (EPhysEvents), StimSeq, change_times
-res <- Recfield(E, StimSeq = StimSeq, change_times = change_times,
-                pixel_width = 10, baserate_win = 1.0, trans_win = 0.4)
-head(res$maps)
-head(res$metrics)
+res <- Recfield(
+  E,
+  StimSeq = StimSeq,
+  change_times = change_times,
+  pixel_width = 10,
+  profile_polarity = rep("positive", length(Channels(E))),
+  profile_bias = rep("onset", length(Channels(E)))
+)
+head(res)
 }
 
 }
