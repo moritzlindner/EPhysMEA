@@ -134,7 +134,7 @@ step_stim_response_dependent_metrics(
 )
 }
 \arguments{
-\item{X}{An \code{EPhysEvents} instance.}
+\item{X}{An \code{EPhysEvents} object.}
 
 \item{step_range}{Numeric or \code{units} length-2 vector \code{c(start, end)}
 defining the step interval. It is interpreted as \code{[start, end)} and
@@ -150,14 +150,18 @@ classified as suppressive and returned as
 
 \item{decision_alpha}{Significance threshold used to convert the run-level
 repeatability tests for \code{PolarityIndex} and \code{BiasIndex} into the
-unit-level calls \code{ProfilePolarity} and \code{ProfileBias}. Default:
+unit-level calls \code{ProfilePolarity} and \code{ProfileBias}. If only one
+run is available for a \code{RecordingID × Channel} group, repeatability
+testing is skipped and this threshold is not used for that group. Default:
 \code{0.05}.}
 
 \item{latency_alpha}{Quantile used to define the latency threshold.}
 
 \item{p_adjust}{Multiple-testing adjustment method passed to
 \code{\link[stats]{p.adjust}} for the group-level polarity and bias
-p-values. Default: \code{"none"}.}
+p-values. If all processed \code{RecordingID × Channel} groups have only
+one run, no repeatability p-values are generated and this argument is not
+used. Default: \code{"none"}.}
 
 \item{parallel}{logical.
 For \code{EPhysEvents} / \code{EPhysContinuous} methods only:
@@ -306,8 +310,10 @@ The method proceeds in four stages:
   components together with derived run-level \code{PolarityScore},
   \code{PolarityIndex}, and \code{BiasIndex}.
   \item Summarize these run-level polarity and bias metrics per
-  \code{RecordingID × Channel} and compute repeatability statistics across
-  runs.
+  \code{RecordingID × Channel}. If multiple runs are available, repeatability
+  statistics are computed across runs and used to derive the unit-level
+  calls. If only one run is available, repeatability testing is skipped and
+  the observed run-level polarity and bias calls are used directly.
   \item Compute downstream per-run metrics whose definition depends on the
   summarized polarity and bias results.
   \item If \code{average_by_recordingID = TRUE}, summarize these downstream

@@ -10,8 +10,10 @@
 #'   components together with derived run-level \code{PolarityScore},
 #'   \code{PolarityIndex}, and \code{BiasIndex}.
 #'   \item Summarize these run-level polarity and bias metrics per
-#'   \code{RecordingID × Channel} and compute repeatability statistics across
-#'   runs.
+#'   \code{RecordingID × Channel}. If multiple runs are available, repeatability
+#'   statistics are computed across runs and used to derive the unit-level
+#'   calls. If only one run is available, repeatability testing is skipped and
+#'   the observed run-level polarity and bias calls are used directly.
 #'   \item Compute downstream per-run metrics whose definition depends on the
 #'   summarized polarity and bias results.
 #'   \item If \code{average_by_recordingID = TRUE}, summarize these downstream
@@ -58,17 +60,30 @@
 #'   OFF-labeled value.}
 #' }
 #'
-#' @param X An \code{EPhysEvents} instance.
-#' @inheritParams StepStimMetrics
+#' @param X An \code{EPhysEvents} object.
+#' @param step_range Numeric or \code{units} length-2 vector \code{c(start, end)}
+#'   defining the step interval. It is interpreted as \code{[start, end)} and
+#'   must satisfy \code{start < end}. If given as \code{units}, it is converted
+#'   to \code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.
+#' @param average_by_recordingID Logical; if \code{TRUE}, average all numeric
+#'   metric columns across rows sharing the same \code{RecordingID} and
+#'   \code{Channel} using \code{mean(na.rm = TRUE)}. In addition,
+#'   \code{Suppressed_By_Contrast} is summarized as the proportion of runs
+#'   classified as suppressive and returned as
+#'   \code{Suppressed_By_Contrast_Prop}. Default: \code{FALSE}.
 #' @param decision_alpha Significance threshold used to convert the run-level
 #'   repeatability tests for \code{PolarityIndex} and \code{BiasIndex} into the
-#'   unit-level calls \code{ProfilePolarity} and \code{ProfileBias}. Default:
+#'   unit-level calls \code{ProfilePolarity} and \code{ProfileBias}. If only one
+#'   run is available for a \code{RecordingID × Channel} group, repeatability
+#'   testing is skipped and this threshold is not used for that group. Default:
 #'   \code{0.05}.
 #' @param latency_alpha Quantile used to define the baseline ISI threshold for
 #'   the latency detector. Default: \code{0.05}.
 #' @param p_adjust Multiple-testing adjustment method passed to
 #'   \code{\link[stats]{p.adjust}} for the group-level polarity and bias
-#'   p-values. Default: \code{"none"}.
+#'   p-values. If all processed \code{RecordingID × Channel} groups have only
+#'   one run, no repeatability p-values are generated and this argument is not
+#'   used. Default: \code{"none"}.
 #' @inheritParams EPhysData::`lapply-EPhys`
 #' @inheritDotParams step_stim_response_auc_components
 #'   on_win off_win baseline_win binwidth smooth gauss_sd
@@ -163,6 +178,8 @@ setMethod(
            ...) {
 
     p_adjust <- match.arg(p_adjust, p.adjust.methods)
+    p_value_args_nondefault <- !identical(decision_alpha, 0.05) ||
+      !identical(p_adjust, "none")
 
     md <- Metadata(X)
 
@@ -279,7 +296,7 @@ setMethod(
         p <- p[is.finite(p)]
         p_nz <- p[p != 0]
 
-        n_runs <- length(p)
+        n_runs <- nrow(df)
         n_nonzero <- length(p_nz)
         n_pos <- sum(p_nz > 0)
         n_neg <- sum(p_nz < 0)
@@ -293,8 +310,9 @@ setMethod(
         } else {
           "ambiguous"
         }
+        single_run <- n_runs <= 1L
 
-        Polarity_SignTest_p <- if (n_nonzero > 0L) {
+        Polarity_SignTest_p <- if (!single_run && n_nonzero > 0L) {
           binom.test(
             x = max(n_pos, n_neg),
             n = n_nonzero,
@@ -325,7 +343,7 @@ setMethod(
           "balanced"
         }
 
-        Bias_SignTest_p <- if (n_bias_nonzero > 0L) {
+        Bias_SignTest_p <- if (!single_run && n_bias_nonzero > 0L) {
           binom.test(
             x = max(n_onset, n_offset),
             n = n_bias_nonzero,
@@ -372,7 +390,26 @@ setMethod(
       })
     )
 
-    if (p_adjust != "none") {
+    has_single_run_groups <- any(out_rep$N_Runs <= 1L, na.rm = TRUE)
+    has_multi_run_groups <- any(out_rep$N_Runs > 1L, na.rm = TRUE)
+
+    if (has_single_run_groups && !has_multi_run_groups && p_value_args_nondefault) {
+      warning(
+        "StepStimResponseProfile(): all RecordingID × Channel groups have only one run; ",
+        "repeatability p-value testing is skipped, so non-default ",
+        "'decision_alpha' and/or 'p_adjust' values are ignored.",
+        call. = FALSE
+      )
+    } else if (has_single_run_groups && p_value_args_nondefault) {
+      warning(
+        "StepStimResponseProfile(): some RecordingID × Channel groups have only one run; ",
+        "repeatability p-value testing is skipped for those groups, so non-default ",
+        "'decision_alpha' and/or 'p_adjust' values are ignored for them.",
+        call. = FALSE
+      )
+    }
+
+    if (p_adjust != "none" && has_multi_run_groups) {
       if ("Polarity_SignTest_p" %in% names(out_rep)) {
         ok <- !is.na(out_rep$Polarity_SignTest_p)
         out_rep$Polarity_SignTest_p_adj <- NA_real_
@@ -392,19 +429,29 @@ setMethod(
     }
 
     out_rep$ProfilePolarity <- ifelse(
-      !is.na(out_rep$Polarity_SignTest_p) &
-        out_rep$Polarity_SignTest_p < decision_alpha &
+      out_rep$N_Runs <= 1L &
         out_rep$Polarity_Call %in% c("positive", "negative"),
       out_rep$Polarity_Call,
-      "ambiguous"
+      ifelse(
+        !is.na(out_rep$Polarity_SignTest_p) &
+          out_rep$Polarity_SignTest_p < decision_alpha &
+          out_rep$Polarity_Call %in% c("positive", "negative"),
+        out_rep$Polarity_Call,
+        "ambiguous"
+      )
     )
 
     out_rep$ProfileBias <- ifelse(
-      !is.na(out_rep$Bias_SignTest_p) &
-        out_rep$Bias_SignTest_p < decision_alpha &
+      out_rep$N_Runs <= 1L &
         out_rep$Bias_Call %in% c("onset", "offset"),
       out_rep$Bias_Call,
-      "ambiguous"
+      ifelse(
+        !is.na(out_rep$Bias_SignTest_p) &
+          out_rep$Bias_SignTest_p < decision_alpha &
+          out_rep$Bias_Call %in% c("onset", "offset"),
+        out_rep$Bias_Call,
+        "ambiguous"
+      )
     )
 
     ## Stage 3: per-run downstream metrics conditional on summarized polarity/bias
@@ -1298,3 +1345,144 @@ step_stim_response_dependent_metrics <- function(x,
     )
   )
 }
+
+
+
+
+#' Build a binned response-rate trace for a fixed analysis window
+#'
+#' Internal helper used by \code{\link{step_stim_resp_metrics}}.
+#'
+#' @param spk Numeric vector of spike times.
+#' @param t0 Window start time.
+#' @param win Window length.
+#' @param binwidth Bin width for the histogram-based rate trace. If \code{NA},
+#'   the helper returns \code{list(breaks = NULL, rate = NULL)}.
+#' @param smooth Logical; if \code{TRUE}, smooth the rate trace with a Gaussian
+#'   kernel.
+#' @param gauss_sd Standard deviation of the Gaussian smoothing kernel.
+#'
+#' @return A named list with elements:
+#' \describe{
+#'   \item{\code{breaks}}{Histogram breakpoints.}
+#'   \item{\code{rate}}{Binned spike rate in spikes/s.}
+#' }
+#'
+#' @keywords internal
+make_rate_trace <- function(spk, t0, win, binwidth, smooth = FALSE, gauss_sd = 0.02) {
+  if (is.na(binwidth)) {
+    return(list(breaks = NULL, rate = NULL))
+  }
+  stopifnot(is.finite(win), win > 0, is.finite(binwidth), binwidth > 0)
+
+  t1 <- t0 + win
+  spk <- spk[is.finite(spk) & spk >= t0 & spk < t1]
+
+  breaks <- seq(t0, t1, by = binwidth)
+  if (length(breaks) < 2L || tail(breaks, 1) < (t1 - 1e-12)) {
+    breaks <- c(breaks, t1)
+  }
+  breaks <- unique(breaks)
+
+  h <- hist(
+    spk,
+    breaks = breaks,
+    right = FALSE,
+    plot = FALSE,
+    include.lowest = TRUE
+  )
+  rate <- h$counts / diff(h$breaks)
+
+  if (smooth && length(rate)) {
+    k_idx  <- seq(-3 * gauss_sd, 3 * gauss_sd, by = binwidth)
+    kernel <- dnorm(k_idx, sd = gauss_sd)
+    kernel <- kernel / sum(kernel)
+
+    r_sm <- filter(rate, kernel, sides = 2, circular = FALSE)
+    if (anyNA(r_sm)) {
+      nz <- which(!is.na(r_sm))
+      if (length(nz)) {
+        left_gap  <- seq_len(min(nz) - 1L)
+        right_gap <- if (max(nz) < length(r_sm)) (max(nz) + 1L):length(r_sm) else integer(0)
+        if (length(left_gap))  r_sm[left_gap]  <- r_sm[min(nz)]
+        if (length(right_gap)) r_sm[right_gap] <- r_sm[max(nz)]
+      } else {
+        r_sm <- rate
+      }
+    }
+    rate <- as.numeric(r_sm)
+  }
+
+  list(breaks = h$breaks, rate = as.numeric(rate))
+}
+
+#' Compute mean spike rate in a fixed analysis window
+#'
+#' Internal helper used by \code{\link{step_stim_resp_metrics}}.
+#'
+#' @param spk Numeric vector of spike times.
+#' @param t0 Window start time.
+#' @param win Window length.
+#' @param binwidth Bin width for the optional histogram-based computation.
+#'   If \code{NA}, the rate is computed directly as count divided by window
+#'   length.
+#' @param gauss_sd Standard deviation of the Gaussian kernel. Included for
+#'   interface consistency with \code{make_rate_trace()}, but smoothing is
+#'   disabled internally for this mean-rate calculation.
+#'
+#' @return Numeric scalar giving mean spike rate in spikes/s.
+#'
+#' @keywords internal
+window_mean_rate <- function(spk, t0, win, binwidth, gauss_sd = 0.02) {
+  if (is.na(binwidth)) {
+    return(count_in(spk, t0, t0 + win) / win)
+  }
+
+  tr <- make_rate_trace(
+    spk = spk,
+    t0 = t0,
+    win = win,
+    binwidth = binwidth,
+    smooth = FALSE,
+    gauss_sd = gauss_sd
+  )
+
+  if (is.null(tr$rate) || !length(tr$rate)) {
+    return(0)
+  }
+
+  sum(tr$rate * diff(tr$breaks), na.rm = TRUE) / win
+}
+#' @keywords internal
+#' @noMd
+#' @param x for step_spikerate: Numeric vector of spike times already restricted to the relevant
+#'   analysis window.
+#' @param t for step_spikerate: Duration of the analysis window in seconds, used to convert spike
+#'   count to mean spike rate.#'
+#' @return For \code{step_spikerate()}, a numeric scalar giving mean spike rate
+#'   in spikes/s, or \code{NA_real_} if the window duration is invalid.
+step_spikerate <- function(x, t) {
+  t <- to_num(t)
+
+  if (!is.finite(t) || t <= 0)
+    return(NA_real_)
+
+  ra <- length(x) / t
+  if (!is.finite(ra))
+    NA_real_
+  else
+    as.numeric(ra)
+}
+
+#' left Inclusive, right exclusive window counting
+#' @keywords internal
+#' @noMd
+#' @param x for step_spikerate: Numeric vector of spike times already restricted to the relevant
+#'   analysis window.
+#' @param a,b Left () and right margins of window
+count_in <- function(x, a, b) {
+  if (!length(x))
+    return(0L)
+  sum(x >= a & x < b)
+}
+
