@@ -357,9 +357,8 @@ setMethod(
         data.frame(
           RecordingID = df$RecordingID[1],
           Channel = df$Channel[1],
-
+          RunUID = if (single_run) as.character(df$RunUID[1]) else "aggregated",
           N_Runs = n_runs,
-
           Polarity_Call = Polarity_Call,
           N_Runs_PolarityNonzero = n_nonzero,
           N_Runs_PolarityPositive = n_pos,
@@ -562,7 +561,9 @@ setMethod(
       out_dom["Dominant_Component"]
     )
 
-    out$RunUID <- "aggregated"
+    key_out <- paste(out$RecordingID, out$Channel, sep = "\r")
+    key_rep <- paste(out_rep$RecordingID, out_rep$Channel, sep = "\r")
+    out$RunUID <- out_rep$RunUID[match(key_out, key_rep)]
 
     keep <- intersect(c(id_cols, wanted_metrics), names(out))
     out[, keep, drop = FALSE]

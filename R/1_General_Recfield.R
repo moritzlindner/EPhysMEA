@@ -211,18 +211,32 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
                 progress = progress
               )
             } else if (!is.null(profile_polarity) && !is.null(profile_bias)) {
-              chan_pol <- as.list(profile_polarity[channels])
-              chan_bias <- as.list(profile_bias[channels])
 
-              res_list <- EPhysData::lapply(
-                X,
-                function(run_obj, ...) {
-                  run_res <- vector("list", length(run_obj))
-                  names(run_res) <- names(run_obj)
+              chan_pol <- profile_polarity[channels]
+              chan_bias <- profile_bias[channels]
 
-                  for (j in seq_along(run_obj)) {
-                    nm <- names(run_obj)[j]
-                    run_res[[j]] <- single_worker(
+              res_list <- vector("list", length(X@Data))
+              names(res_list) <- names(X@Data)
+
+              if (progress) {
+                pb_id <- cli::cli_progress_bar(
+                  name = "Recfield",
+                  total = sum(vapply(X@Data, length, integer(1L)))
+                )
+                on.exit(try(cli::cli_progress_done(id = pb_id), silent = TRUE), add = TRUE)
+              }
+
+              for (i in seq_along(X@Data)) {
+                run_obj <- X@Data[[i]]
+
+                run_res <- vector("list", length(run_obj))
+                names(run_res) <- names(run_obj)
+
+                for (j in seq_along(run_obj)) {
+                  nm <- names(run_obj)[j]
+
+                  run_res[[j]] <- tryCatch(
+                    single_worker(
                       spikes = run_obj[[j]],
                       StimSeq = StimSeq,
                       change_times = change_times,
@@ -232,14 +246,32 @@ setMethod("Recfield", signature(X = "EPhysEvents"),
                       profile_bias = chan_bias[[nm]],
                       ReturnMap = ReturnMap,
                       ...
-                    )
+                    ),
+                    error = function(e) {
+                      msg <- sprintf(
+                        "Recfield() error at run %s (index %d), channel '%s': %s",
+                        if (is.null(names(X@Data))) as.character(i) else names(X@Data)[i],
+                        i,
+                        nm,
+                        conditionMessage(e)
+                      )
+
+                      if (identical(error, "stop")) {
+                        stop(msg, call. = FALSE)
+                      } else {
+                        warning(msg, call. = FALSE)
+                        NULL
+                      }
+                    }
+                  )
+
+                  if (progress) {
+                    cli::cli_progress_update(id = pb_id)
                   }
-                  run_res
-                },
-                parallel = parallel,
-                error = error,
-                progress = progress
-              )
+                }
+
+                res_list[[i]] <- run_res
+              }
             } else {
               res_list <- EPhysData::lapply(
                 X,
