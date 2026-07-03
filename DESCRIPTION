@@ -4,10 +4,7 @@ Title: Analysis Tools for Multichannel Electrophysiology
 Version: 0.2.0
 Author: person("Moritz", "Lindner", email = "moritz@lindnerlab.de", role =
     c("aut", "cre"))
-Description: Companion analysis package for 'EPhysData' providing binning and
-    trial aggregation, tuning and receptive-field analysis, Naka-Rushton
-    fitting, spike-train irregularity metrics, and ggplot2-based visualisation
-    for 'EPhysEvents' and 'EPhysContinuous' objects.
+Description: The EPhysMEA package is an environment for working with microelectrode array data in R providing binning and trial aggregation, tuning and receptive-field analysis, Naka-Rushton fitting, spike-train irregularity metrics, and ggplot2-based visualisation.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
