@@ -2,5 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
+.*
 hello.R
 EPhysMEA.Rproj
