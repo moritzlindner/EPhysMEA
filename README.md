@@ -14,7 +14,7 @@ metrics, and ggplot2-based visualisation.
 
 ## Installation
 
-You can install the development version of EPhysMEA from
+You can install the development version of EPhysMEA from 
 [GitHub](https://github.com/) with:
 
 ``` r

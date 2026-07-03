@@ -22,7 +22,7 @@ The EPhysMEA package is an environment for working with microelectrode array dat
 
 ## Installation
 
-You can install the development version of EPhysMEA from [GitHub](https://github.com/) with:
+You can install the development version of EPhysMEA from [GitHub](https://github.com/) with: 
 
 ``` r
 if (!requireNamespace("remotes", quietly = TRUE)){
