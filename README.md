@@ -1,47 +1,25 @@
+
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-  # EPhysMEA R Package
+# EPhysMEA
 
-  ## Introduction
+<!-- badges: start -->
 
-  The `EPhysMEA` package provides analysis tools for multichannel
-electrophysiology recordings stored in the `EPhysData` classes
-`EPhysEvents` and `EPhysContinuous`. It adds methods for binning and
-trial aggregation, tuning and receptive-field analysis, Naka–Rushton
-fitting, spike-train irregularity metrics, and ggplot2-based
-visualisation.
+<!-- badges: end -->
 
-`EPhysMEA` is intended as a companion to the `EPhysData` package: raw
-data import and basic container handling are done in `EPhysData`, while
-`EPhysMEA` focuses on downstream analysis.
+The EPhysMEA package is an environment for working with microelectrode
+array data in R providing binning and trial aggregation, tuning and
+receptive-field analysis, Naka-Rushton fitting, spike-train irregularity
+metrics, and ggplot2-based visualisation.
 
 ## Installation
 
-You can install the development version of `EPhysMEA` from GitHub:
+You can install the development version of EPhysMEA from
+[GitHub](https://github.com/) with:
 
 ``` r
-if (!requireNamespace("remotes", quietly = TRUE)) {
+if (!requireNamespace("remotes", quietly = TRUE)){
   install.packages("remotes")
 }
-if (!requireNamespace("EPhysData", quietly = TRUE)) {
-  remotes::install_github("moritzlindner/EPhysData")
-}
 remotes::install_github("moritzlindner/EPhysMEA")
-
-library(EPhysData)
-library(EPhysMEA)
-
-```
-
-## Example: basic rate and variability metrics
-
-``` r 
-# events: EPhysEvents object (runs × channels of spike/event times)
-# cont:   EPhysContinuous object (time × runs × channels of traces)
-
-# Mean firing rate per channel
-
-
-rate_df <- ChannelMeanRate(events)
-head(rate_df)
 ```
