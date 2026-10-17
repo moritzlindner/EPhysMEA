@@ -41,6 +41,10 @@
 #' @param unit_tags Optional integer vector of MC_Rack Spike Sorter unit tags to
 #'   retain. \code{NULL} (default) keeps all tags. For unsorted MC_Rack spikes
 #'   the tag is normally 0.
+#' @param raster_time_unit Time unit used in MC_Rack raster ASCII files:
+#'   \code{"auto"} (default), \code{"s"}, \code{"ms"}, or \code{"us"}.
+#'   Automatic mode inspects the file header and falls back to seconds with a
+#'   warning if no unit can be identified.
 #' @param hdf5_recording Optional selector for MCS HDF5 recordings. May be a
 #'   numeric index/RecordingID or a character \code{"Recording_x"} name. By
 #'   default all recordings containing matching timestamp streams are imported.
@@ -95,9 +99,11 @@ ImportMCS <- function(path,
                       recording_id = 1L,
                       time_range = NULL,
                       unit_tags = NULL,
+                      raster_time_unit = c("auto", "s", "ms", "us"),
                       hdf5_recording = NULL,
                       hdf5_stream = NULL) {
   format <- match.arg(format)
+  raster_time_unit <- match.arg(raster_time_unit)
 
   if (!is.character(experiment) || length(experiment) != 1L || is.na(experiment) || !nzchar(experiment)) {
     stop("'experiment' must be one non-empty character value.")
@@ -137,7 +143,8 @@ ImportMCS <- function(path,
       fmt_i,
       mcrack_raster = .mcs_import_raster_group(
         groups$paths[[i]],
-        unit_tags = unit_tags
+        unit_tags = unit_tags,
+        raster_time_unit = raster_time_unit
       ),
       mcs_hdf5 = .mcs_import_hdf5_group(
         groups$paths[[i]],
