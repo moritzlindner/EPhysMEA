@@ -27,7 +27,10 @@ Imports:
     units,
     waveslim,
     imager
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
 Remotes:
-    github::moritzlindner/EPhysData,
+    github::moritzlindner/EPhysData@unstable,
     github::moritzlindner/EPhysMethods
 RoxygenNote: 7.3.3
