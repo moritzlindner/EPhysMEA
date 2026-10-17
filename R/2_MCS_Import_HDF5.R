@@ -98,14 +98,7 @@
       .mcs_h5_as_char(.mcs_h5_attr(ts_parent[[nm]], "DataSubType", ""))
     }, character(1))
     hit <- tolower(subtype) == "neuralspike"
-    if (!any(hit)) {
-      stop(
-        "The selected MCS recording contains timestamp streams, but none has ",
-        "DataSubType = 'NeuralSpike'. Available subtypes: ",
-        paste(unique(subtype), collapse = ", "),
-        ". Use 'hdf5_stream' to select a stream explicitly if appropriate."
-      )
-    }
+    if (!any(hit)) return(character(0))
     return(nms[hit])
   }
 
@@ -271,9 +264,10 @@
     stop("No neural spike timestamp entities were imported from MCS HDF5 file: ", path)
   }
 
-  # Collect metadata by channel. The higher-level builder safely collapses
-  # repeated channel metadata across multiple recordings.
-  channel_metadata <- if (length(ch_meta_acc)) do.call(rbind, ch_meta_acc) else data.frame()
+  # Collapse repeated channel metadata across MCS recordings while retaining
+  # all distinct values encountered for a channel.
+  all_channels <- unique(unlist(lapply(data_out, names), use.names = FALSE))
+  channel_metadata <- .mcs_combine_channel_metadata(ch_meta_acc, all_channels)
 
   list(
     data = data_out,
