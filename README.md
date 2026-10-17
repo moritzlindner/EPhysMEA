@@ -23,3 +23,26 @@ if (!requireNamespace("remotes", quietly = TRUE)){
 }
 remotes::install_github("moritzlindner/EPhysMEA")
 ```
+
+
+## Importing Multi Channel Systems spike data
+
+`ImportMCS()` imports spike timestamps detected in MC_Rack / Multi Channel
+Systems software directly into an `EPhysEvents` object. For repeated-stimulus
+experiments, MC_Rack Raster Plot ASCII export is recommended because the sweep
+number is retained as trial information.
+
+``` r
+x <- ImportMCS(
+  path = list(
+    "0.01" = "data/I_001",
+    "0.1"  = "data/I_01",
+    "1"    = "data/I_1"
+  ),
+  experiment = "retinal_step",
+  time_range = c(-2, 6)
+)
+```
+
+MCS RawData HDF5 files containing `NeuralSpike` timestamp streams can also be
+read directly with `ImportMCS("recording.h5", format = "mcs_hdf5")`.

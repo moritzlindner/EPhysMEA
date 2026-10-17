@@ -1,7 +1,7 @@
 Package: EPhysMEA
 Type: Package
 Title: Analysis Tools for Multichannel Electrophysiology
-Version: 0.2.0
+Version: 0.2.1
 Author: person("Moritz", "Lindner", email = "moritz@lindnerlab.de", role =
     c("aut", "cre"))
 Description: The EPhysMEA package is an environment for working with microelectrode array data in R providing binning and trial aggregation, tuning and receptive-field analysis, Naka-Rushton fitting, spike-train irregularity metrics, and ggplot2-based visualisation.
@@ -17,15 +17,20 @@ Imports:
     cowplot,
     ggplot2,
     ggpubr,
+    hdf5r,
     matrixStats,
     methods,
     minpack.lm,
     reshape2,
+    R.matlab,
     stats,
     units,
     waveslim,
     imager
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
 Remotes:
-    github::moritzlindner/EPhysData,
+    github::moritzlindner/EPhysData@unstable,
     github::moritzlindner/EPhysMethods
 RoxygenNote: 7.3.3
