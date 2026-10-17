@@ -45,7 +45,10 @@
   # MC_Rack Raster Plot ASCII exports are tab-delimited. Some exports use
   # semicolons/commas depending on locale; parse all three separators here.
   split_line <- function(x) {
-    trimws(strsplit(x, "[\\t;,]+", perl = TRUE)[[1L]])
+    # Prefer explicit field separators before comma so decimal-comma exports
+    # such as "1,25\t3\t0" are not split inside the numeric value.
+    sep <- if (grepl("\\t", x)) "\\t" else if (grepl(";", x, fixed = TRUE)) ";" else ","
+    trimws(strsplit(x, sep, fixed = identical(sep, ";") || identical(sep, ","), perl = identical(sep, "\\t"))[[1L]])
   }
 
   parts <- lapply(lines, split_line)
