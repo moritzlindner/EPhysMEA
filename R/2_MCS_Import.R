@@ -91,6 +91,7 @@
 #'
 #' @seealso \code{\link{ggEventRaster}}, \code{\link{StepStimResponseProfile}}
 #' @keywords IO import electrophysiology MCS MC_Rack spikes events
+#' @importFrom hdf5r H5File h5attr
 #' @export
 ImportMCS <- function(path,
                       format = c("auto", "mcrack_raster", "mcs_hdf5"),
