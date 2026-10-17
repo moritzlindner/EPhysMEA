@@ -20,7 +20,10 @@
   if (is.factor(x)) x <- as.character(x)
   if (is.raw(x)) x <- rawToChar(x)
   if (is.list(x) && length(x) == 1L) x <- x[[1L]]
+  if (is.null(x) || length(x) == 0L) return("")
   x <- as.character(x)
+  x <- x[1L]
+  if (is.na(x)) return("")
   trimws(gsub("\\x00", "", x, fixed = TRUE))
 }
 
