@@ -33,6 +33,75 @@ trial_cor_fisher_z <- function(trials_by_time, return_pairs = FALSE) {
   }
 }
 
+trial_shuffle_indices <- function(n_trials, n_time) {
+  original <- seq_len(n_time)
+  vapply(seq_len(n_trials), function(i) {
+    repeat {
+      indices <- sample.int(n_time)
+      if (!identical(indices, original)) return(indices)
+    }
+  }, integer(n_time))
+}
+
+trial_cor_shuffled_r <- function(trials_by_time, rows, indices) {
+  selected <- trials_by_time[cbind(rows, as.vector(indices))]
+  shuffled <- matrix(selected, nrow = nrow(trials_by_time), byrow = TRUE)
+  trial_cor_fisher_z(shuffled)$mean_trial_r
+}
+
+trial_cor_cuda_device <- function() {
+  # Loading torch can consume R RNG draws before the first permutation.
+  seed <- get0(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  on.exit({
+    if (!is.null(seed)) {
+      assign(".Random.seed", seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(list = ".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+
+  if (!requireNamespace("torch", quietly = TRUE)) {
+    stop("GPU = TRUE requires the optional 'torch' package. Install it with install.packages('torch').",
+         call. = FALSE)
+  }
+  if (!torch::torch_is_installed() || !torch::cuda_is_available()) {
+    stop("GPU = TRUE requires CUDA to be available in R torch. Check torch::cuda_is_available() or use GPU = FALSE.",
+         call. = FALSE)
+  }
+  "cuda"
+}
+
+trial_cor_torch_evaluator <- function(trials_by_time, device) {
+  n_trials <- nrow(trials_by_time)
+  n_time <- ncol(trials_by_time)
+  centred <- trials_by_time - rowMeans(trials_by_time)
+  norms <- sqrt(rowSums(centred^2))
+  if (any(!is.finite(norms) | norms == 0)) {
+    stop("GPU trial correlation requires finite, non-constant trials.", call. = FALSE)
+  }
+
+  # The mean and norm of each trial stay the same under permutation.
+  data <- torch::torch_tensor(centred / norms, dtype = torch::torch_double(), device = device)
+  upper <- torch::torch_tensor(upper.tri(matrix(0, n_trials, n_trials)),
+                               dtype = torch::torch_double(), device = device)
+  n_pairs <- choose(n_trials, 2L)
+
+  function(indices) {
+    n_batch <- dim(indices)[3L]
+    positions <- torch::torch_tensor(indices, dtype = torch::torch_long(), device = device)
+    positions <- positions$permute(c(3L, 2L, 1L))
+    data_batch <- data$unsqueeze(1L)$expand(c(n_batch, n_trials, n_time))
+    shuffled <- torch::torch_gather(data_batch, dim = 3L, index = positions)
+    r <- torch::torch_bmm(shuffled, shuffled$transpose(2L, 3L))
+
+    # Match the CPU Fisher-z clipping in double precision.
+    z <- r$clamp(min = -1 + 1e-12, max = 1 - 1e-12)$atanh() * upper
+    scores <- (z$sum(dim = 3L)$sum(dim = 2L) / n_pairs)$tanh()
+    max_abs_r <- torch::torch_amax(r$abs() * upper, dim = c(2L, 3L))
+    torch::as_array(torch::torch_stack(list(scores, max_abs_r), dim = 2L)$cpu())
+  }
+}
+
 #' Low-level: Permutation p-value by random within-trial shuffling
 #'
 #' Builds a null distribution by randomly permuting the time-bin order within
@@ -55,7 +124,8 @@ trial_cor_pvalue_perm <- function(trials_by_time,
                                   min_perm = 75L,
                                   stop_lower = 0.005,
                                   stop_upper = 0.10,
-                                  return_pairs = FALSE) {
+                                  return_pairs = FALSE,
+                                  gpu_device = NULL) {
   stopifnot(is.matrix(trials_by_time), is.numeric(trials_by_time))
   n_trials <- nrow(trials_by_time)
   n_time   <- ncol(trials_by_time)
@@ -70,25 +140,44 @@ trial_cor_pvalue_perm <- function(trials_by_time,
   exceed <- 0L
   used   <- 0L
   if (isTRUE(return_perm)) perm_stats <- numeric(n_perm)
-  # pre-allocate once outside the loop
-  shuffled <- matrix(NA_real_, n_trials, n_time)
+  rows <- rep(seq_len(n_trials), each = n_time)
+
+  evaluate_batch <- if (!is.null(gpu_device)) {
+    trial_cor_torch_evaluator(trials_by_time, gpu_device)
+  }
+  batch_end <- 0L
+  # Limit memory for both the shuffled traces and the correlation matrices.
+  batch_size <- max(1L, min(64L, floor(2^21 / (as.double(n_trials) * max(n_time, n_trials)))))
 
   cli_progress_bar("Calculating p-value for trial-to-trial correlation.", total = n_perm)
+  on.exit(cli_progress_done(), add = TRUE)
   for (b in seq_len(n_perm)) {
-    idx <- vapply(seq_len(n_trials), function(i) {
-      repeat {
-        p <- sample.int(n_time)
-        if (!all(p == seq_len(n_time))) return(p)  # reject identity
+    if (is.null(evaluate_batch)) {
+      indices <- trial_shuffle_indices(n_trials, n_time)
+      stat_b <- trial_cor_shuffled_r(trials_by_time, rows, indices)
+    } else {
+      if (b > batch_end) {
+        batch_start <- b
+        batch_end <- min(n_perm, b + batch_size - 1L)
+        n_batch <- batch_end - batch_start + 1L
+        batch_indices <- array(0L, dim = c(n_time, n_trials, n_batch))
+        batch_seeds <- vector("list", n_batch)
+        for (i in seq_len(n_batch)) {
+          batch_indices[, , i] <- trial_shuffle_indices(n_trials, n_time)
+          batch_seeds[[i]] <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+        }
+        batch_results <- evaluate_batch(batch_indices)
       }
-    }, integer(n_time))
 
-    rows <- rep(seq_len(n_trials), each = n_time)  # 1,1,...,1, 2,2,...,2, ...
-    cols <- as.vector(idx)                          # c(idx[,1], idx[,2], ..., idx[,n_trials])
-
-    sel <- trials_by_time[cbind(rows, cols)]
-    shuffled <- matrix(sel, nrow = n_trials, ncol = n_time, byrow = TRUE)
-
-    stat_b <- trial_cor_fisher_z(shuffled, return_pairs = FALSE)$mean_trial_r
+      i <- b - batch_start + 1L
+      stat_b <- batch_results[i, 1L]
+      # Recheck close comparisons and near-perfect pair correlations with the CPU
+      # statistic, where roundoff can otherwise change an exceedance decision.
+      if (!is.finite(stat_b) || !is.finite(batch_results[i, 2L]) ||
+          abs(stat_b - obs_r) <= 1e-8 || batch_results[i, 2L] >= 1 - 1e-6) {
+        stat_b <- trial_cor_shuffled_r(trials_by_time, rows, batch_indices[, , i])
+      }
+    }
 
     used <- b
     if (isTRUE(return_perm)) perm_stats[b] <- stat_b
@@ -100,7 +189,10 @@ trial_cor_pvalue_perm <- function(trials_by_time,
     }
     cli_progress_update()
   }
-  cli_progress_done()
+  if (used < batch_end) {
+    # Discard RNG draws from the unused tail of the final batch.
+    assign(".Random.seed", batch_seeds[[used - batch_start + 1L]], envir = .GlobalEnv)
+  }
 
   p_value <- (exceed + 1) / (used + 1)
 
@@ -131,6 +223,8 @@ trial_cor_pvalue_perm <- function(trials_by_time,
 #' @param stop_lower Numeric; lower running p-hat threshold for early stopping (default 0.005).
 #' @param stop_upper Numeric; upper running p-hat threshold for early stopping (default 0.10).
 #' @param return_perm Logical; currently retained for internal use.
+#' @param GPU Logical; if \code{TRUE}, batch permutation correlations on one
+#'   CUDA device using the optional \pkg{torch} package. Defaults to \code{FALSE}.
 #' @inheritParams EPhysData::group_apply
 #'
 #' @details
@@ -140,6 +234,12 @@ trial_cor_pvalue_perm <- function(trials_by_time,
 #' pairwise. After \code{\link{Bin}}, runs remain separate; binning does not
 #' average or merge them. The \code{Repeat} column is not used explicitly by
 #' this method.
+#'
+#' With \code{GPU = TRUE}, shuffle indices are generated by R and the batched
+#' correlations run on CUDA. For comparisons with the CPU backend, use
+#' \code{parallel = FALSE} with the same \code{seed}. The GPU backend processes
+#' recording/channel groups in one R process, independently of \code{parallel}.
+#' An explicit GPU request requires a working CUDA installation of \pkg{torch}.
 #'
 #' @return
 #' A data.frame with one row per (\code{RecordingID}, \code{Channel}) containing:
@@ -152,7 +252,7 @@ trial_cor_pvalue_perm <- function(trials_by_time,
 #'     \eqn{\mathrm{Pr}(r_{\mathrm{perm}} \ge r_{\mathrm{obs}})}.}
 #'   \item{n_trials}{Integer; number of usable runs/trials entering the correlation.}
 #'   \item{n_pairs}{Integer; number of distinct run/trial pairs contributing to \code{mean_trial_r}.}
-#'   \item{n_perm_used}{Integer; number of permutations actually evaluated.}
+#'   \item{n_perm_used}{Integer; number of permutations used to compute the p-value.}
 #' }
 #' @export
 setGeneric("TrialCorrelationTest", function(X,
@@ -164,7 +264,8 @@ setGeneric("TrialCorrelationTest", function(X,
                                             return_perm = FALSE,
                                             parallel    = !interactive(),
                                             error       = c("stop","warn")[1],
-                                            progress    = interactive())
+                                            progress    = interactive(),
+                                            GPU         = FALSE)
   standardGeneric("TrialCorrelationTest"))
 
 #' @rdname TrialCorrelationTest
@@ -181,8 +282,13 @@ setMethod("TrialCorrelationTest",
                    return_perm = FALSE,
                    parallel    =  !interactive(),
                    error       = c("stop","warn")[1],
-                   progress    = interactive()) {
+                   progress    = interactive(),
+                   GPU         = FALSE) {
 
+            if (!is.logical(GPU) || length(GPU) != 1L || is.na(GPU)) {
+              stop("TrialCorrelationTest() requires GPU to be TRUE or FALSE.", call. = FALSE)
+            }
+            gpu_device <- if (GPU) trial_cor_cuda_device()
             if (!is.null(seed)) set.seed(seed)
             err_mode <- match.arg(error, c("stop","warn"))
 
@@ -209,7 +315,8 @@ setMethod("TrialCorrelationTest",
                 return_perm = return_perm,
                 min_perm    = min_perm,
                 stop_lower  = stop_lower,
-                stop_upper  = stop_upper
+                stop_upper  = stop_upper,
+                gpu_device  = gpu_device
               )
               c(mean_trial_r = res$mean_trial_r, p_value = res$p_value,
                 n_trials = n_trials, n_pairs = res$n_pairs, n_perm_used = res$n_perm_used)
@@ -218,7 +325,7 @@ setMethod("TrialCorrelationTest",
             # 1) compute per (RecordingID, Channel)
             nested <- group_apply(
               X, worker,
-              parallel = parallel, error = err_mode, progress = progress,
+              parallel = if (GPU) FALSE else parallel, error = err_mode, progress = progress,
               n_perm = n_perm, min_perm = min_perm,
               stop_lower = stop_lower, stop_upper = stop_upper,
               return_perm = return_perm

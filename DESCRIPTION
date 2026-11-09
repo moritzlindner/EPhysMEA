@@ -28,7 +28,8 @@ Imports:
     waveslim,
     imager
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    torch
 Config/testthat/edition: 3
 Remotes:
     github::moritzlindner/EPhysData@unstable,
