@@ -141,9 +141,11 @@ defining the step interval. It is interpreted as \code{[start, end)} and
 must satisfy \code{start < end}. If given as \code{units}, it is converted
 to \code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.}
 
-\item{average_by_recordingID}{Logical; if \code{TRUE}, average all numeric
+\item{average_by_recordingID}{Logical; if \code{TRUE}, average numeric
 metric columns across rows sharing the same \code{RecordingID} and
-\code{Channel} using \code{mean(na.rm = TRUE)}. In addition,
+\code{Channel} using \code{mean(na.rm = TRUE)}, except that
+\code{Liang_OnOff_PreferenceIndex} is calculated on the run-averaged
+ON and OFF traces. In addition,
 \code{Suppressed_By_Contrast} is summarized as the proportion of runs
 classified as suppressive and returned as
 \code{Suppressed_By_Contrast_Prop}. Default: \code{FALSE}.}
@@ -173,7 +175,8 @@ if \code{TRUE}, use \code{future.apply::future_lapply()} over runs.}
     \item{\code{}}{}
   }}
 
-\item{x}{Numeric vector of spike times for a single spike train.}
+\item{x}{Numeric vector of spike times for a single spike train.
+\code{step_stim_response_liang_index()} also accepts a list of such vectors.}
 
 \item{step_onset}{Numeric scalar giving step onset time.}
 
@@ -208,7 +211,8 @@ if \code{TRUE}, use \code{future.apply::future_lapply()} over runs.}
 
 \item{profile_bias}{Unit-level summarized bias call.}
 
-\item{baseline_rate}{Scalar baseline rate in spikes/s.}
+\item{baseline_rate}{Baseline rate in spikes/s. For a list of spike trains,
+pass one baseline rate per train.}
 }
 \value{
 If \code{average_by_recordingID = FALSE} (default), a wide \code{data.frame}
@@ -222,7 +226,7 @@ metrics:
 
 If \code{average_by_recordingID = TRUE}, a wide \code{data.frame} with one row
 per \code{RecordingID × Channel}, containing the same metrics summarized
-across runs. Numeric metrics are averaged with \code{mean(na.rm = TRUE)}.
+across runs as described for \code{average_by_recordingID}.
 \code{Dominant_Component} is summarized as the unique most frequent
 non-missing category across runs and returned as \code{NA} if no unique mode
 exists.
@@ -296,7 +300,7 @@ Shinomoto local variation (LV) in the baseline window before step onset
 
 \strong{step_stim_response_transience:} low-level function to compute transience from summarized polarity and bias calls
 
-\strong{step_stim_response_liang_index:} low-level function to compute Liang-style ON/OFF preference from summarized polarity
+\strong{step_stim_response_liang_index:} Compute signed Liang-style ON/OFF preference.
 
 \strong{step_stim_response_polarity_bias}: Wrapper that computes AUC components, polarity metrics, and bias
 metrics for one spike train.
@@ -350,14 +354,16 @@ The downstream metrics currently comprise:
   polarity and bias calls. For positive responses, the positive
   baseline-subtracted component is used; for negative responses, the
   suppressive component is rectified and used analogously.}
-  \item{\code{Liang_OnOff_PreferenceIndex}}{Liang-style ON/OFF preference
-  index computed from baseline-subtracted ON- and OFF-aligned response traces
-  of length \code{step_offset - step_onset}. As in Liang et al., positive
-  values are set to zero for suppressive responses before the index is
-  computed. In this implementation, suppressive cases are identified from the
-  summarized \code{ProfilePolarity}, and an additional post-hoc sign
-  inversion is applied so that ON-step suppression yields a negative,
-  OFF-labeled value.}
+  \item{\code{Liang_OnOff_PreferenceIndex}}{Signed ON/OFF preference from
+  Liang et al., applied to baseline-subtracted firing-rate traces aligned
+  to the onset and offset of one step. Each trace spans
+  \code{step_offset - step_onset}. The index is
+  \code{sum((on - off) * w) / sum(w^2)}, where
+  \code{w = abs(on) + abs(off)}. A zero denominator yields \code{NA}.
+  As in Liang et al., positive trace values are set to zero for suppressive
+  responses. The summarized \code{ProfilePolarity} call of \code{"negative"}
+  identifies suppressive responses in these step recordings. Other calls,
+  including \code{"ambiguous"}, use both signed traces as measured.}
 }
 
 The polarity score is defined as
@@ -409,7 +415,8 @@ results.
   \item{\code{step_stim_response_transience(x, ...)}}{Compute the downstream
   transience index from the summarized polarity and bias calls.}
   \item{\code{step_stim_response_liang_index(x, ...)}}{Compute the Liang-style
-  ON/OFF preference index from the summarized polarity call.}
+  ON/OFF preference index from one or more spike trains. For a list of spike
+  trains, supply one baseline rate per train in \code{baseline_rate}.}
   \item{\code{step_stim_response_dependent_metrics(x, ...)}}{Convenience
   wrapper that combines the downstream per-run calculations.}
 }

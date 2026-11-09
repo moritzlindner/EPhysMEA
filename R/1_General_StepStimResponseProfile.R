@@ -50,14 +50,16 @@
 #'   polarity and bias calls. For positive responses, the positive
 #'   baseline-subtracted component is used; for negative responses, the
 #'   suppressive component is rectified and used analogously.}
-#'   \item{\code{Liang_OnOff_PreferenceIndex}}{Liang-style ON/OFF preference
-#'   index computed from baseline-subtracted ON- and OFF-aligned response traces
-#'   of length \code{step_offset - step_onset}. As in Liang et al., positive
-#'   values are set to zero for suppressive responses before the index is
-#'   computed. In this implementation, suppressive cases are identified from the
-#'   summarized \code{ProfilePolarity}, and an additional post-hoc sign
-#'   inversion is applied so that ON-step suppression yields a negative,
-#'   OFF-labeled value.}
+#'   \item{\code{Liang_OnOff_PreferenceIndex}}{Signed ON/OFF preference from
+#'   Liang et al., applied to baseline-subtracted firing-rate traces aligned
+#'   to the onset and offset of one step. Each trace spans
+#'   \code{step_offset - step_onset}. The index is
+#'   \code{sum((on - off) * w) / sum(w^2)}, where
+#'   \code{w = abs(on) + abs(off)}. A zero denominator yields \code{NA}.
+#'   As in Liang et al., positive trace values are set to zero for suppressive
+#'   responses. The summarized \code{ProfilePolarity} call of \code{"negative"}
+#'   identifies suppressive responses in these step recordings. Other calls,
+#'   including \code{"ambiguous"}, use both signed traces as measured.}
 #' }
 #'
 #' @param X An \code{EPhysEvents} object.
@@ -65,9 +67,11 @@
 #'   defining the step interval. It is interpreted as \code{[start, end)} and
 #'   must satisfy \code{start < end}. If given as \code{units}, it is converted
 #'   to \code{\link[EPhysData:TimeUnits]{TimeUnits}(X)}.
-#' @param average_by_recordingID Logical; if \code{TRUE}, average all numeric
+#' @param average_by_recordingID Logical; if \code{TRUE}, average numeric
 #'   metric columns across rows sharing the same \code{RecordingID} and
-#'   \code{Channel} using \code{mean(na.rm = TRUE)}. In addition,
+#'   \code{Channel} using \code{mean(na.rm = TRUE)}, except that
+#'   \code{Liang_OnOff_PreferenceIndex} is calculated on the run-averaged
+#'   ON and OFF traces. In addition,
 #'   \code{Suppressed_By_Contrast} is summarized as the proportion of runs
 #'   classified as suppressive and returned as
 #'   \code{Suppressed_By_Contrast_Prop}. Default: \code{FALSE}.
@@ -102,7 +106,7 @@
 #'
 #' If \code{average_by_recordingID = TRUE}, a wide \code{data.frame} with one row
 #' per \code{RecordingID × Channel}, containing the same metrics summarized
-#' across runs. Numeric metrics are averaged with \code{mean(na.rm = TRUE)}.
+#' across runs as described for \code{average_by_recordingID}.
 #' \code{Dominant_Component} is summarized as the unique most frequent
 #' non-missing category across runs and returned as \code{NA} if no unique mode
 #' exists.
@@ -126,7 +130,8 @@
 #'   \item{\code{step_stim_response_transience(x, ...)}}{Compute the downstream
 #'   transience index from the summarized polarity and bias calls.}
 #'   \item{\code{step_stim_response_liang_index(x, ...)}}{Compute the Liang-style
-#'   ON/OFF preference index from the summarized polarity call.}
+#'   ON/OFF preference index from one or more spike trains. For a list of spike
+#'   trains, supply one baseline rate per train in \code{baseline_rate}.}
 #'   \item{\code{step_stim_response_dependent_metrics(x, ...)}}{Convenience
 #'   wrapper that combines the downstream per-run calculations.}
 #' }
@@ -459,6 +464,10 @@ setMethod(
       function(z) z,
       parallel = parallel
     )
+    channels <- Channels(X)
+    raw_nested <- lapply(raw_nested, function(run) {
+      if (is.null(names(run))) run else run[channels]
+    })
     x_flat <- unlist(raw_nested, recursive = FALSE, use.names = FALSE)
 
     if (length(x_flat) != nrow(metrics_df)) {
@@ -534,8 +543,7 @@ setMethod(
         "Shinomoto_Baseline_LV",
         "Response_Amplitude",
         "ISI_Latency",
-        "Farrow_TransienceIndex",
-        "Liang_OnOff_PreferenceIndex"
+        "Farrow_TransienceIndex"
       ),
       names(per_run_out)
     )
@@ -562,6 +570,24 @@ setMethod(
     )
 
     key_out <- paste(out$RecordingID, out$Channel, sep = "\r")
+    liang_by_group <- vapply(
+      split(seq_along(x_flat), key_run),
+      function(rows) {
+        step_stim_response_liang_index(
+          x = x_flat[rows],
+          step_onset = step_onset,
+          step_offset = step_offset,
+          baseline_rate = metrics_df$Baseline_Rate[rows],
+          profile_polarity = rep_match$ProfilePolarity[rows[1L]],
+          binwidth = binwidth,
+          smooth = smooth,
+          gauss_sd = gauss_sd
+        )$Liang_OnOff_PreferenceIndex
+      },
+      numeric(1)
+    )
+    out$Liang_OnOff_PreferenceIndex <- unname(liang_by_group[key_out])
+
     key_rep <- paste(out_rep$RecordingID, out_rep$Channel, sep = "\r")
     out$RunUID <- out_rep$RunUID[match(key_out, key_rep)]
 
@@ -1101,12 +1127,12 @@ step_stim_response_transience <- function(x,
 
 #' Liang-style ON/OFF preference index
 #'
-#' \strong{step_stim_response_liang_index:} low-level function to compute Liang-style ON/OFF preference from summarized polarity
+#' \strong{step_stim_response_liang_index:} Compute signed Liang-style ON/OFF preference.
 #'
-#' @param x Numeric vector of spike times for a single spike train.
+#' @param x Numeric vector of spike times or a list of such vectors, one per run.
 #' @param step_onset Numeric scalar giving step onset time.
 #' @param step_offset Numeric scalar giving step offset time.
-#' @param baseline_rate Scalar baseline rate in spikes/s.
+#' @param baseline_rate Baseline rate in spikes/s, one per spike train.
 #' @param profile_polarity Unit-level summarized polarity call.
 #' @param binwidth Bin width for the response trace.
 #' @param smooth Logical; whether to smooth the trace.
@@ -1126,18 +1152,22 @@ step_stim_response_liang_index <- function(x,
                                            smooth = FALSE,
                                            gauss_sd = 0.02) {
 
-  x <- sort(to_num(x)[is.finite(to_num(x))])
   step_onset <- to_num(step_onset)
   step_offset <- to_num(step_offset)
   baseline_rate <- to_num(baseline_rate)
   binwidth <- to_num(binwidth)
   gauss_sd <- to_num(gauss_sd)
 
-  if (identical(profile_polarity, "ambiguous")) {
-    return(list(Liang_OnOff_PreferenceIndex = NA_real_))
+  n_runs <- 1L
+  if (is.list(x)) {
+    n_runs <- length(x)
+    stopifnot(n_runs > 0L, length(baseline_rate) == n_runs)
+    # Pool spikes on the common bin grid, then divide by the number of runs.
+    x <- as.numeric(unlist(lapply(x, to_num), use.names = FALSE))
+    baseline_rate <- mean(baseline_rate)
   }
+  x <- to_num(x)
 
-  eps <- sqrt(.Machine$double.eps)
   step_win <- step_offset - step_onset
 
   on_trace <- make_rate_trace(
@@ -1147,7 +1177,7 @@ step_stim_response_liang_index <- function(x,
     binwidth = binwidth,
     smooth = smooth,
     gauss_sd = gauss_sd
-  )$rate - baseline_rate
+  )$rate / n_runs - baseline_rate
 
   off_trace <- make_rate_trace(
     spk = x,
@@ -1156,7 +1186,7 @@ step_stim_response_liang_index <- function(x,
     binwidth = binwidth,
     smooth = smooth,
     gauss_sd = gauss_sd
-  )$rate - baseline_rate
+  )$rate / n_runs - baseline_rate
 
   if (identical(profile_polarity, "negative")) {
     on_trace[on_trace > 0] <- 0
@@ -1166,14 +1196,10 @@ step_stim_response_liang_index <- function(x,
   w <- abs(on_trace) + abs(off_trace)
   den_pref <- sum(w^2, na.rm = TRUE)
 
-  idx <- if (is.finite(den_pref) && den_pref > eps) {
+  idx <- if (is.finite(den_pref) && den_pref > 0) {
     sum((on_trace - off_trace) * w, na.rm = TRUE) / den_pref
   } else {
     NA_real_
-  }
-
-  if (identical(profile_polarity, "negative") && is.finite(idx)) {
-    idx <- -abs(idx)
   }
 
   list(
@@ -1385,14 +1411,18 @@ make_rate_trace <- function(spk, t0, win, binwidth, smooth = FALSE, gauss_sd = 0
   }
   breaks <- unique(breaks)
 
-  h <- hist(
-    spk,
-    breaks = breaks,
-    right = FALSE,
-    plot = FALSE,
-    include.lowest = TRUE
-  )
-  rate <- h$counts / diff(h$breaks)
+  rate <- if (length(spk)) {
+    h <- hist(
+      spk,
+      breaks = breaks,
+      right = FALSE,
+      plot = FALSE,
+      include.lowest = TRUE
+    )
+    h$counts / diff(breaks)
+  } else {
+    numeric(length(breaks) - 1L)
+  }
 
   if (smooth && length(rate)) {
     k_idx  <- seq(-3 * gauss_sd, 3 * gauss_sd, by = binwidth)
@@ -1414,7 +1444,7 @@ make_rate_trace <- function(spk, t0, win, binwidth, smooth = FALSE, gauss_sd = 0
     rate <- as.numeric(r_sm)
   }
 
-  list(breaks = h$breaks, rate = as.numeric(rate))
+  list(breaks = breaks, rate = as.numeric(rate))
 }
 
 #' Compute mean spike rate in a fixed analysis window
